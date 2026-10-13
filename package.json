@@ -1,0 +1,18 @@
+{
+  "name": "job-watch",
+  "version": "1.0.0",
+  "description": "MVP local de veille et de candidatures assistées.\r La **démo** est explicitement fictive; la **veille web** s'appuie sur des\r connecteurs conformes (API officielles France Travail / Adzuna) uniquement\r lorsqu'elles sont configurées. Aucun envoi d'e-mail réel sans approbation.",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {},
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^26.6.4"
+  }
+}

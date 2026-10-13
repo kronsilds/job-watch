@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Job Watch</title><link rel="stylesheet" href="/static/style.css?v=11">
+</head>
+<body>
+  <header class="hero">
+    <div><span class="eyebrow">JOB WATCH · AGENT LOOP</span><h1>Votre recherche,<br><em>en mouvement.</em></h1><p>Préparez votre profil, explorez le marché et pilotez chaque candidature au même endroit.</p></div>
+    <div class="campaign-bar">
+      <select id="campaignSource" class="select" title="Source de la veille">
+        <option value="demo">Demo (fichier local)</option>
+        <option value="web">Web (connecteurs du profil)</option>
+      </select>
+      <button id="campaignBtn" class="primary" onclick="runCampaign()">Lancer une campagne</button>
+    </div>
+  </header>
+  <div id="authGate" class="auth-gate" hidden>
+    <div id="noticeAuth" class="notice" role="status" aria-live="polite" hidden></div>
+    <div class="card auth-panel"><h3>Connexion</h3><p class="hint">Les annonces sont partagees, mais chaque compte a son profil, ses notes, ses decisions et ses dossiers.</p><label class="field"><span>Nom</span><input id="authUser" autocomplete="username"></label><label class="field"><span>Mot de passe</span><input id="authPass" type="password" autocomplete="current-password"></label><div class="form-actions"><button class="primary" type="button" onclick="doLogin('login')">Se connecter</button><button class="ghost" type="button" onclick="doLogin('register')">Creer le compte</button></div></div>
+  </div>
+  <main id="appMain">
+    <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+    <div id="authBar" class="card auth-bar" hidden><strong id="authState">Non connecte</strong><span class="auth-bar-actions"><button id="logoutBtn" class="ghost" type="button" onclick="doLogout()">Se deconnecter</button></span></div>
+    <section class="kpis">
+      <div><small>PROFIL</small><strong id="profileStatus">À préparer</strong></div>
+      <div><small>OPPORTUNITÉS</small><strong id="jobsCount">—</strong></div>
+      <div><small>RETENUES</small><strong id="shortlistCount">—</strong></div>
+      <div><small>CANDIDATURES</small><strong id="applicationsCount">—</strong></div>
+    </section>
+    <nav class="tabs" aria-label="Navigation"><button class="tab" data-tab="tracking">Suivi</button><button class="tab" data-tab="market">Marché &amp; offres</button><button class="tab" data-tab="applications">Candidatures</button><button class="tab active" data-tab="profile"><span id="profileTabLabel">Profil</span></button></nav>
+
+    <section id="profile" class="panel active">
+      <div class="section-title"><div><span class="eyebrow">INITIALISATION</span><h2>Construire le profil canonique</h2><p>Importez un CV, vérifiez l’extraction, puis complétez votre projet de recherche. Le profil doit être validé avant la veille.</p></div><span id="profileBadge" class="badge">Brouillon</span></div>
+      <div class="profile-grid">
+        <form id="profileForm" class="card form-card" onsubmit="saveProfile(event,false)">
+          <h3>Fiche de recherche</h3>
+          <p class="hint">Les champs multi-valeurs acceptent une valeur par ligne (les virgules restent acceptées).</p>
+          <div id="cvContext" class="cv-context" hidden>
+            <label class="field"><span>Métier principal (issu du CV)</span><input id="main_job" readonly placeholder="—"></label>
+            <label class="field"><span>Métier secondaire (issu du CV)</span><input id="secondary_job" readonly placeholder="—"></label>
+            <label class="field field--wide"><span>Résumé du profil (généré depuis le CV — modifiable)</span><textarea id="profile_summary" rows="3" placeholder="—"></textarea><small class="hint">Généré à partir des faits détectés (ou par le prompt IA ci-dessous) ; corrigez-le librement avant de valider.</small></label>
+          </div>
+          <div class="form-grid">
+            <label class="field"><span>Nom</span><input id="name" required placeholder="Prénom Nom"></label>
+            <label class="field"><span>Expérience (années)</span><input id="years_experience" type="number" min="0" step="0.5" placeholder="5"></label>
+            <label class="field field--wide"><span>Métier(s) recherché(s)</span><textarea id="jobs" rows="3" placeholder="Data analyst&#10;BI analyst"></textarea></label>
+            <label class="field field--wide"><span>Métiers connexes</span><textarea id="adjacent_jobs" rows="2" placeholder="Product analyst"></textarea></label>
+            <label class="field"><span>Zone de recherche</span><textarea id="locations" rows="2" placeholder="Lyon, Paris"></textarea></label>
+            <label class="field"><span>Préférences télétravail</span><textarea id="remote" rows="2" placeholder="hybride, remote"></textarea></label>
+            <label class="field"><span>Contrats</span><textarea id="contracts" rows="2" placeholder="CDI, freelance"></textarea></label>
+            <label class="field field--wide"><span>Compétences</span><textarea id="skills" rows="4" placeholder="SQL&#10;Python&#10;Power BI"></textarea><small class="hint">Liste utilisée pour le scoring et le matching des offres. Elle dérive de la matrice (catégorie, niveau, preuve) affichée à droite : une compétence ajoutée ici reçoit sa propre ligne.</small></label>
+          </div>
+          <details class="profile-details">
+            <summary>Affiner la recherche <span>Sources, séniorité et mobilité</span></summary>
+            <div class="form-grid details-content">
+              <label class="field field--wide"><span>Sources (connecteurs)</span><textarea id="sources" rows="2" placeholder="france_travail, adzuna, linkedin, wttj…"></textarea></label>
+              <label class="field"><span>Séniorité</span><textarea id="seniorite" rows="2" placeholder="junior, confirmé, senior, lead"></textarea></label>
+              <label class="field field--wide"><span>Métiers visés (veille)</span><textarea id="metiers_vises" rows="2" placeholder="Architecte logiciel&#10;Tech Lead"></textarea><small class="hint">Mots-clés envoyés aux connecteurs. Vide = les métiers recherchés ci-dessus sont utilisés.</small></label>
+              <label class="field"><span>Secteurs d'activité du parcours</span><textarea id="sectors" rows="3" placeholder="Santé&#10;Télécommunications"></textarea></label>
+              <label class="field"><span>Exclusions (mots-clés)</span><textarea id="exclusions" rows="3" placeholder="défense&#10;jeux d'argent"></textarea><small class="hint">Une offre contenant un de ces mots est plafonnée par le scoring.</small></label>
+              <label class="field"><span>Salaire minimum annuel (€)</span><input id="salary_min" type="number" min="0" step="1000" placeholder="60000"></label>
+              <label class="field"><span>Salaire maximum annuel (€)</span><input id="salary_max" type="number" min="0" step="1000" placeholder="90000"></label>
+              <label class="field field--wide"><span>Mobilité</span><textarea id="mobility" placeholder="Ex. France entière, 2 jours de déplacement par semaine"></textarea><small class="hint">Contraintes de déplacement, rythme accepté, régions exclues.</small></label>
+            </div>
+          </details>
+          <details class="profile-details">
+            <summary>Pondérations du scoring <span>Réglages avancés</span></summary>
+            <div class="weights details-content">
+            <h3>Pondérations du scoring</h3>
+            <p class="hint">Répartissez l'importance de chaque critère. La somme doit être égale à 100 %.</p>
+            <div id="weightsList" class="weights-list"></div>
+            <div class="weights-total"><span>Total</span><strong id="weightsTotal">100 %</strong><span id="weightsStatus" class="ok">✓</span></div>
+            <div class="weights-actions"><button class="ghost" type="button" onclick="resetWeights()">Défaults</button><button class="ghost" type="button" onclick="normalizeWeights()">Normaliser à 100 %</button></div>
+            </div>
+          </details>
+          <div class="ai-box" id="profileAiBox">
+            <h4>Prompt IA — affiner le profil</h4>
+            <p class="hint">Ex : « Recentre la cible sur des postes de Tech Lead à Paris, ajoute mes compétences Cloud du CV et retire le management ». L'IA repart de la fiche affichée et du CV importé, sans rien inventer.</p>
+            <div class="ai-row single">
+              <input id="profileAiPrompt" placeholder="Votre consigne pour l'IA…">
+              <button type="button" class="primary" onclick="aiRefineProfile(this)">Affiner avec l'IA</button>
+            </div>
+            <small id="profileAiStatus" class="hint"></small>
+          </div>
+          <div class="form-actions"><button class="ghost" type="submit">Enregistrer le brouillon</button><button class="primary" type="button" onclick="saveProfile(event,true)">Valider le profil</button></div>
+        </form>
+        <aside class="card cv-card">
+          <div><span class="eyebrow">SOURCE</span><h3>Importer le CV</h3></div>
+          <p>Analyse par le modèle IA quand il est configuré, sinon par les heuristiques locales : aucune information n’est inventée. Les champs détectés préremplissent la fiche.</p>
+          <input id="cvFile" class="visually-hidden" type="file" accept=".pdf,.docx,.txt" onchange="importCv()">
+          <label class="dropzone" for="cvFile"><strong>Choisir un fichier</strong><span>PDF, DOCX ou TXT</span></label>
+          <div id="cvResult" class="analysis empty">Aucun CV analysé pour le moment.</div>
+          <details class="matrix-details"><summary id="matrixSummary">Matrice de compétences détectées</summary><p class="hint">La matrice est la source unique des compétences (catégorie, niveau, preuve) : la liste « Compétences » de la fiche en est la projection plate utilisée pour le scoring.</p><div id="skillMatrix" class="matrix"></div></details>
+        </aside>
+      </div>
+    </section>
+
+    <section id="market" class="panel">
+      <div class="section-title"><div><span class="eyebrow">VEILLE</span><h2>Marché et opportunités</h2><p id="marketSummary">Lancez une campagne pour importer et noter les opportunités.</p></div></div>
+      <div class="card import-url-card" id="importUrlCard">
+        <h3>Ajouter une annonce repérée soi-même</h3>
+        <p class="hint">Collez le lien d’une annonce trouvée par vos propres moyens (site de l’entreprise, newsletter, réseau) : la plateforme récupère la page, en extrait les informations factuelles, pré-note l’offre, complète les champs manquants puis la note et l’ajoute à la liste ci-dessous.</p>
+        <div class="import-url-row">
+          <input id="importUrl" type="url" placeholder="https://…" autocomplete="off" spellcheck="false">
+          <button id="importUrlBtn" class="primary" type="button" onclick="importOfferUrl()">Pré-noter et ajouter</button>
+        </div>
+        <details id="importUrlFallback">
+          <summary>Page illisible (connexion requise, anti-bot) ? Renseignez l’essentiel en repli</summary>
+          <div class="form-grid">
+            <label class="field"><span>Intitulé du poste</span><input id="importTitle" placeholder="Data analyst" autocomplete="off"></label>
+            <label class="field"><span>Entreprise</span><input id="importCompany" placeholder="Acme" autocomplete="off"></label>
+            <label class="field field--wide"><span>Description ou éléments clés (facultatif)</span><textarea id="importDescription" rows="3" placeholder="CDI à Lyon, télétravail partiel, SQL et Power BI…"></textarea></label>
+          </div>
+          <small class="hint">Ces valeurs ne servent qu’en repli : elles ne remplacent jamais ce que l’annonce indique elle-même.</small>
+        </details>
+        <div id="importUrlResult" class="analysis empty" hidden></div>
+      </div>
+      <div class="filters card" id="jobFilters"><label class="score-filter"><span>Score minimum</span><input id="minScore" type="number" min="0" max="10" step="0.5" value="0" inputmode="decimal"></label><label class="score-filter"><span>Décision</span><select id="decisionFilter" class="select"><option value="">Toutes</option><option value="new">Nouvelles</option><option value="retained">Retenues</option><option value="ignored">Ignorées</option></select></label><label class="score-filter"><span>Candidature</span><select id="applicationFilter" class="select"><option value="">Toutes</option><option value="yes">Avec dossier</option><option value="no">Sans dossier</option></select></label><label class="score-filter"><span>Tri</span><select id="sortFilter" class="select"><option value="score">Score décroissant</option><option value="date">Ajout récent</option><option value="title">Intitulé (A→Z)</option></select></label><button class="ghost filters-reset" type="button" onclick="resetJobFilters()">Réinitialiser</button></div>
+      <div id="campaignReport" class="card report" hidden></div>
+      <div id="marketAnalysis" class="card analysis" hidden></div>
+      <div id="jobsFilterCount" class="filters-summary" hidden></div>
+      <div id="jobList" class="jobs"></div>
+    </section>
+
+    <section id="applications" class="panel">
+      <div class="section-title"><div><span class="eyebrow">DOSSIER</span><h2>Candidature & annonce, côte à côte</h2><p>Choisissez un dossier ci-dessous pour relire l’annonce et réadapter vos textes au même endroit. Le prompt IA réécrit le pitch, l’e-mail ou le CV en tenant compte de l’annonce affichée. Le menu Kanban fait avancer le suivi sans quitter la page.</p></div><button class="ghost" onclick="loadApplications()">Rafraîchir</button></div>
+      <div id="dossierPickerWrap" class="card dossier-picker-card"><label class="field"><span>Dossier de candidature</span><select id="dossierPicker" class="select" onchange="openDossier(Number(this.value))"><option value="">— Choisir un dossier —</option></select></label></div>
+      <div id="dossierView" class="dossier" hidden></div>
+      <div id="applicationList" class="applications empty">Aucune candidature. Retenez d’abord une offre puis créez son dossier.</div>
+    </section>
+
+    <section id="tracking" class="panel">
+      <div class="section-title"><div><span class="eyebrow">KANBAN</span><h2>Suivi des candidatures</h2><p>Cliquez sur une carte pour ouvrir son dossier (annonce + textes + prompt IA). Vous pouvez aussi glisser une carte d’une colonne à l’autre pour faire évoluer son statut. Chaque changement est audité.</p></div><button class="ghost" onclick="loadKanban()">Rafraîchir</button></div>
+      <div id="trackingTodo" class="todo-bar" hidden></div>
+      <div id="trackingReport" class="card report" hidden></div>
+      <div id="kanbanBoard" class="kanban" aria-label="Tableau Kanban des candidatures"></div>
+    </section>
+  </main>
+  <aside id="agentFeed" class="agent-feed" hidden aria-live="polite">
+    <div class="agent-feed-head"><span class="agent-dot" aria-hidden="true"></span><strong id="agentFeedTitle">Agent</strong><button type="button" class="agent-close" onclick="closeAgentFeed()" aria-label="Fermer le fil d'activité">✕</button></div>
+    <ol id="agentFeedSteps" class="agent-steps"></ol>
+  </aside>
+<script src="/static/app.js?v=11"></script></body></html>

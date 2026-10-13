@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+sqlalchemy>=2
+pydantic
+python-multipart
+jinja2
+pypdf
+python-docx
+pytest
+httpx
+openai
+anthropic
+python-dotenv
+beautifulsoup4
+langgraph>=1.0

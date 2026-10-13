@@ -218,3 +218,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+/data/
+/node_modules/
+/nul
+/jobwatch_Backup.db
+/jobwatch.db
+/jobwatch.db-shm
+/jobwatch.db-wal
+/jobwatch.db.bak-skillfix

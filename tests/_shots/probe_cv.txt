@@ -1,0 +1,6 @@
+Olivier ROUGERON
+Architecte Logiciel / Tech Lead
+25 ans d'expérience en architecture logicielle et développement.
+Compétences : SQL Server, React 19, TypeScript, Git / Git Flow, Microsoft Azure,
+Docker, Node.js, PostgreSQL, Python (R occasionnel), API REST.
+Paris, Île-de-France. Remote ou hybride acceptés. Contrats : CDI, Indépendant.

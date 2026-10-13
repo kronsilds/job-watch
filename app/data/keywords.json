@@ -1,0 +1,32 @@
+{
+  "skills": {
+    "Données & Analytique": ["sql", "python", "power bi", "tableau", "excel", "pandas", "numpy", "dbt", "airflow", "etl", "dax", "a/b testing", "spark", "kafka", "hadoop", "snowflake", "bigquery", "looker", "r", "matlab", "sas", "statistiques", "machine learning", "deep learning", "data mining", "dataviz", "ggplot"],
+    "Développement & Technologies": ["javascript", "typescript", "react", "vue", "angular", "node.js", "nodejs", "java", "c#", "c++", "go", "rust", "ruby", "php", "html", "css", "tailwind", "docker", "kubernetes", "git", "ci/cd", "jenkins", "aws", "azure", "gcp", "terraform", "ansible", "rest", "graphql", "microservices", "django", "flask", "fastapi", "spring", "dotnet", "unity", "swift", "kotlin", "flutter", "react native"],
+    "Bureautique & Productivité": ["word", "powerpoint", "outlook", "notion", "jira", "confluence", "trello", "slack", "google analytics", "seo", "sem", "crm"],
+    "Design & Création": ["figma", "sketch", "adobe", "photoshop", "illustrator", "indesign", "premiere pro", "ux", "ui", "wireframe", "design system", "prototypage", "montage video", "canva"],
+    "Marketing, Commerce & Vente": ["marketing digital", "marketing", "salesforce", "hubspot", "prospection", "closing", "community management", "content marketing", "emailing", "publicite", "trade marketing", "import/export", "logistique", "supply chain"],
+    "Management & Soft Skills": ["gestion de projet", "management", "leadership", "communication", "negociation", "recrutement", "budget", "planification", "animation d'equipe", "coordination", "agile", "scrum"],
+    "Finance & Comptabilité": ["comptabilité", "audit", "fiscalité", "trésorerie", "ebitda", "ifrs", "bilan", "controle de gestion", "paie", "10k", "facturation", "budget previsionnel"],
+    "RH & Administrative": ["gestion des talents", "onboarding", "droit social", "declaration", "gestion administrative", "juridique", "droit", "contentieux", "reglementation", "qualite", "risques"],
+    "Industrie & Santé": ["qualite", "production", "maintenance", "hse", "soins", "diagnostic", "pharmacie", "gestion des stocks", "lean", "six sigma", "logistique"]
+  },
+  "job_titles": [
+    "data analyst", "data engineer", "data scientist", "analytics engineer", "bi analyst",
+    "developpeur", "developpeuse", "developpeur full stack", "developpeur backend", "developpeur frontend",
+    "ingenieur logiciel", "software engineer", "chef de projet", "cheffe de projet", "product manager",
+    "product owner", "scrum master", "ux designer", "ui designer", "graphiste", "designer", "webdesigner",
+    "community manager", "charge de communication", "chargee de communication", "charge de marketing digital",
+    "content manager", "social media manager", "traffic manager", "growth hacker", "seo specialist",
+    "commercial", "charge d'affaires", "business developer", "account manager", "sales manager",
+    "consultant", "consultante", "conseiller", "conseillere", "charge de recrutement", "recruteur", "recruteuse",
+    "rh", "gestionnaire de paie", "comptable", "expert-comptable", "auditeur", "auditrice", "controleur de gestion",
+    "analyste financier", "tresorier", "gerant de portefeuille", "responsable", "directeur", "directrice",
+    "ingenieur", "ingenieure", "technicien", "technicienne", "assistant", "assistante", "administrateur systeme",
+    "devops", "cloud engineer", "security engineer", "pentester", "data protection officer", "dpo",
+    "juriste", "avocat", "notaire", "medecin", "infirmier", "infirmiere", "pharmacien", "kinestherapeute",
+    "professeur", "enseignant", "enseignante", "formateur", "formatrice", "couturier", "stagiaire", "alternant"
+  ],
+  "contracts": ["cdi", "cdd", "stage", "alternance", "apprentissage", "freelance", "independant", "indépendant", "temps plein", "plein temps", "temps partiel", "part-time", "intérim", "interim", "saisonnier"],
+  "remote": ["télétravail", "teletravail", "remote", "full remote", "100% remote", "hybride", "3j par semaine", "sur site", "présentiel", "presentiel"],
+  "locations": ["paris", "ile-de-france", "lyon", "marseille", "toulouse", "nice", "nantes", "bordeaux", "lille", "strasbourg", "rennes", "grenoble", "montpellier", "rouen", "tours", "bruxelles", "geneve", "montreal", "londres", "new york", "berlin", "amsterdam", "barcelone", "madrid", "lisbonne", "dubai", "singapour"]
+}

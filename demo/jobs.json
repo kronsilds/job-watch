@@ -1,0 +1,110 @@
+[
+    {
+        "external_id": "demo-001",
+        "title": "Data Analyst BI",
+        "company": "Nova Retail",
+        "location": "Lyon",
+        "remote": "hybride",
+        "contract": "CDI",
+        "salary_min": 42000,
+        "salary_max": 48000,
+        "sectors": [
+            "retail",
+            "data"
+        ],
+        "skills": [
+            "SQL",
+            "Python",
+            "Power BI",
+            "ETL"
+        ],
+        "url": "https://example.invalid/demo-001",
+        "description": "Analyse des ventes et dashboards."
+    },
+    {
+        "external_id": "demo-002",
+        "title": "Analytics Engineer",
+        "company": "Helio Tech",
+        "location": "Paris",
+        "remote": "hybride",
+        "contract": "CDI",
+        "salary_min": 52000,
+        "salary_max": 65000,
+        "sectors": [
+            "SaaS",
+            "data"
+        ],
+        "skills": [
+            "SQL",
+            "dbt",
+            "Python",
+            "Airflow"
+        ],
+        "url": "https://example.invalid/demo-002",
+        "description": "Modélisation analytique et pipelines."
+    },
+    {
+        "external_id": "demo-003",
+        "title": "Product Data Analyst",
+        "company": "Atelier Public",
+        "location": "Nantes",
+        "remote": "remote",
+        "contract": "CDI",
+        "salary_min": 45000,
+        "salary_max": 56000,
+        "sectors": [
+            "services",
+            "data"
+        ],
+        "skills": [
+            "SQL",
+            "Python",
+            "Tableau",
+            "A/B testing"
+        ],
+        "url": "https://example.invalid/demo-003",
+        "description": "Mesurer les parcours produit."
+    },
+    {
+        "external_id": "demo-004",
+        "title": "Data Analyst Finance",
+        "company": "Clairmont",
+        "location": "Lille",
+        "remote": "sur site",
+        "contract": "CDD",
+        "salary_min": 38000,
+        "salary_max": 44000,
+        "sectors": [
+            "finance"
+        ],
+        "skills": [
+            "Excel",
+            "SQL",
+            "Power BI"
+        ],
+        "url": "https://example.invalid/demo-004",
+        "description": "Reporting financier."
+    },
+    {
+        "external_id": "demo-005",
+        "title": "BI Consultant",
+        "company": "Northstar Conseil",
+        "location": "Paris",
+        "remote": "hybride",
+        "contract": "CDI",
+        "salary_min": 48000,
+        "salary_max": 60000,
+        "sectors": [
+            "conseil",
+            "data"
+        ],
+        "skills": [
+            "SQL",
+            "Power BI",
+            "DAX",
+            "ETL"
+        ],
+        "url": "https://example.invalid/demo-005",
+        "description": "Accompagnement BI clients."
+    }
+]

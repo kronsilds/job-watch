@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__chrome-devtools__evaluate_script",
+      "mcp__chrome-devtools__resize_page",
+      "mcp__chrome-devtools__list_console_messages",
+      "mcp__chrome-devtools__close_page",
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "Bash(ps -W)",
+      "Bash(netstat -ano)"
+    ]
+  }
+}
