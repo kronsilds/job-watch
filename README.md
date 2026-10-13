@@ -71,20 +71,50 @@ quelques offres fictives de démonstration.
 
 ## Premiers pas dans l'interface
 
-1. **Créez un compte** sur l'écran de connexion (nom d'utilisateur + mot de
-   passe de 4 caractères minimum). Le compte est local à votre base.
-2. Onglet **Profil** : importez votre CV, relisez la fiche générée, corrigez-la
-   (ou affinez-la avec une consigne via « Affiner avec l'IA »), puis cliquez sur
-   **Valider le profil**. Cette validation est indispensable pour noter les
-   offres.
-3. Onglet **Marché & offres** : choisissez la source (**Demo** pour essayer
-   sans rien configurer, **Web** pour la veille réelle) et cliquez sur
-   **Lancer une campagne**. Les offres apparaissent avec leur note ; vous
-   pouvez filtrer, trier, et retenir ou ignorer chaque offre.
-4. Onglet **Candidatures** : créez un dossier à partir d'une offre retenue,
-   générez le pitch et l'e-mail, relisez et corrigez, puis validez.
-5. Onglet **Suivi** : faites avancer vos candidatures dans le Kanban
-   (envoyée, présélection, entretien, offre, refusée…).
+*(Les captures ci-dessous utilisent un candidat et des offres fictifs.)*
+
+### 1. Créez un compte
+
+Sur l'écran de connexion, saisissez un nom d'utilisateur et un mot de passe
+(4 caractères minimum), puis **Créer le compte**. Le compte est local à votre
+base.
+
+![Écran de connexion](docs/screenshots/01-connexion.png)
+
+### 2. Importez et validez votre profil
+
+Onglet **Profil** : importez votre CV, relisez la fiche générée, corrigez-la
+(ou affinez-la avec une consigne via « Affiner avec l'IA »), puis cliquez sur
+**Valider le profil**. Cette validation est indispensable pour noter les
+offres.
+
+![Onglet Profil : import du CV et fiche de recherche](docs/screenshots/02-profil.png)
+
+### 3. Lancez une veille et parcourez les offres
+
+Onglet **Marché & offres** : choisissez la source (**Demo** pour essayer sans
+rien configurer, **Web** pour la veille réelle) et cliquez sur **Lancer une
+campagne**. Les offres apparaissent avec leur note ; vous pouvez filtrer,
+trier, et retenir ou ignorer chaque offre. Une annonce trouvée ailleurs
+s'ajoute en collant son lien en haut de page.
+
+![Onglet Marché et offres : offres notées](docs/screenshots/03-offres.png)
+
+### 4. Préparez une candidature
+
+Onglet **Candidatures** : créez un dossier à partir d'une offre retenue
+(bouton **Candidater**), générez le pitch et l'e-mail, relisez et corrigez,
+puis validez. L'annonce reste affichée à côté de vos textes.
+
+![Onglet Candidatures : annonce et textes côte à côte](docs/screenshots/04-candidatures.png)
+
+### 5. Suivez l'avancement
+
+Onglet **Suivi** : faites avancer vos candidatures dans le Kanban (envoyée,
+présélection, entretien, offre, refusée…). Chaque changement est daté et
+audité.
+
+![Onglet Suivi : tableau Kanban](docs/screenshots/05-suivi.png)
 
 Aucun e-mail réel n'est envoyé : l'envoi passe par un connecteur de démonstration
 (`mock`) et n'est possible qu'après approbation du dossier.
