@@ -226,3 +226,5 @@ __marimo__/
 /jobwatch.db-shm
 /jobwatch.db-wal
 /jobwatch.db.bak-skillfix
+.vercel
+.env.local

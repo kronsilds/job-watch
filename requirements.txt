@@ -1,6 +1,7 @@
 fastapi
 uvicorn
 sqlalchemy>=2
+psycopg[binary]>=3.2
 pydantic
 python-multipart
 jinja2

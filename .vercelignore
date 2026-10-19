@@ -1,0 +1,12 @@
+.env
+.env.*
+.venv
+.test.db
+*.db
+check_db.py
+node_modules
+e2e
+tests
+docs
+__pycache__
+.pytest_cache
