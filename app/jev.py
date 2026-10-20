@@ -18,7 +18,8 @@ Configuration (``.env``) :
   L'ancien nom ``TYPESAFE_API_KEY`` reste accepté ;
 - ``JEV_BASE_URL`` — défaut ``https://openrouter.ai/api`` ; le client appelle
   ``POST {base}/alpha/decisions`` (Decisions API) ;
-- ``JEV_MODEL`` — défaut ``typesafe/jev-1.13`` (alias ``~typesafe/jev-latest``) ;
+  l'ancien nom ``TYPESAFE_BASE_URL`` reste accepté ;
+- ``JEV_MODEL`` — défaut ``typesafe/jev-1.14`` (alias ``~typesafe/jev-latest``) ;
 - ``JOBWATCH_SCORER`` — ``auto`` (défaut : Jev si clé), ``jev`` ou ``heuristic`` ;
 - ``JOBWATCH_JEV_WORKERS`` — requêtes parallèles (défaut 4) ;
 - ``JOBWATCH_JEV_TIMEOUT`` — délai par requête en secondes (défaut 30).
@@ -30,6 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import time
@@ -39,9 +41,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_BASE_URL = "https://openrouter.ai/api"
 DECISIONS_PATH = "/alpha/decisions"
-DEFAULT_MODEL = "typesafe/jev-1.13"
+DEFAULT_MODEL = "typesafe/jev-1.14"
 RETRY_STATUSES = {429, 500, 502, 503, 504, 529}
 
 # Grilles de niveaux, du moins adapté (0) au plus adapté (3).
@@ -123,12 +127,17 @@ def _text(value) -> str:
 
 def api_key() -> str:
     """Clé OpenRouter (``sk-or-...``) ; ``TYPESAFE_API_KEY`` reste accepté."""
-    return os.getenv("OPENROUTER_API_KEY") or os.getenv("TYPESAFE_API_KEY") or ""
+    return (os.getenv("OPENROUTER_API_KEY") or os.getenv("TYPESAFE_API_KEY")
+            or "").strip()
 
 
 def base_url() -> str:
-    """Racine de l'API ; le client appelle ``{base}/alpha/decisions``."""
-    return (os.getenv("JEV_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
+    """Racine de l'API ; le client appelle ``{base}/alpha/decisions``.
+
+    ``TYPESAFE_BASE_URL`` est accepté comme ancien nom de ``JEV_BASE_URL``.
+    """
+    return (os.getenv("JEV_BASE_URL") or os.getenv("TYPESAFE_BASE_URL")
+            or DEFAULT_BASE_URL).rstrip("/")
 
 
 def scorer_mode() -> str:
@@ -228,7 +237,16 @@ def evaluate(payload: dict, client: httpx.Client | None = None, attempts: int = 
     """
     if not payload.get("questions"):
         return {}
-    headers = {"Authorization": f"Bearer {api_key()}",
+    key = api_key()
+    if key and not key.startswith("sk-or-"):
+        # Cause n°1 des 401 : une clé non OpenRouter (ex. clé d'un proxy LLM)
+        # placée dans OPENROUTER_API_KEY/TYPESAFE_API_KEY, ou une variable
+        # d'environnement obsolète qui écrase le `.env` (load_dotenv n'écrase rien).
+        logger.warning(
+            "La cle utilisee pour Jev ne commence pas par 'sk-or-' ; verifiez "
+            "OPENROUTER_API_KEY dans .env ET l'environnement du terminal serveur "
+            "(OpenRouter rejettera sinon la requete avec un 401).")
+    headers = {"Authorization": f"Bearer {key}",
                "Content-Type": "application/json"}
     timeout = float(os.getenv("JOBWATCH_JEV_TIMEOUT") or 30)
     own = client is None
@@ -239,7 +257,15 @@ def evaluate(payload: dict, client: httpx.Client | None = None, attempts: int = 
             if resp.status_code in RETRY_STATUSES and attempt < attempts - 1:
                 time.sleep(2 ** attempt)
                 continue
-            resp.raise_for_status()
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                # Toujours inclure la réponse du serveur : sans elle, un simple
+                # « 401 Unauthorized » ne dit pas quelle clé a été envoyée ni pourquoi.
+                detail = (resp.text or "").strip()[:300]
+                raise httpx.HTTPStatusError(
+                    f"{exc} | reponse : {detail}" if detail else str(exc),
+                    request=exc.request, response=exc.response) from None
             break
         answers = resp.json().get("answers") or {}
     finally:

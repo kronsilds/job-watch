@@ -112,3 +112,84 @@ def test_search_now_stream_demo(tmp_path, monkeypatch):
     events = _frames(r.text)
     assert events[-1]['type'] == 'done'
     assert events[-1]['result']['imported'] >= 1
+
+
+def test_profile_refine_stream_emits_progress_then_result(tmp_path, monkeypatch):
+    from tests.test_profile_refinement import FakeRefineProvider
+    monkeypatch.setattr('app.profile_analysis.get_provider', FakeRefineProvider)
+    c = _client(tmp_path, monkeypatch)
+    body = {
+        'instruction': 'Recentre sur Tech Lead',
+        'data': {'main_job': 'Architecte', 'jobs': ['Architecte'],
+                 'skills': ['TypeScript']},
+        'source_text': 'CV : TypeScript, React.',
+    }
+    r = c.post('/api/profile/refine/stream', json=body)
+    assert r.status_code == 200
+    assert r.headers['content-type'].startswith('text/event-stream')
+    events = _frames(r.text)
+    steps = [e['step'] for e in events if e['type'] == 'progress']
+    assert steps[:2] == ['prepare', 'model']
+    assert 'apply' in steps and 'summary' in steps
+    assert events[-1]['type'] == 'done'
+    result = events[-1]['result']
+    for key in ('data', 'analysis', 'applied', 'changes_summary', 'warning'):
+        assert key in result
+    assert result['applied'] is True
+    assert result['data']['main_job'] == 'Tech Lead'
+    assert result['changes_summary'].startswith('Recentrage')
+    # La route synchrone renvoie exactement la même charge utile finale.
+    assert c.post('/api/profile/refine', json=body).json() == result
+
+
+def test_profile_refine_stream_without_model_reports_the_warning(tmp_path, monkeypatch):
+    monkeypatch.setenv('LLM_PROVIDER', 'local')
+    monkeypatch.delenv('LLM_API_KEY', raising=False)
+    c = _client(tmp_path, monkeypatch)
+    r = c.post('/api/profile/refine/stream', json={
+        'instruction': 'Ajoute du cloud', 'data': {'main_job': 'Data analyst'}})
+    assert r.status_code == 200
+    events = _frames(r.text)
+    assert events[-1]['type'] == 'done'
+    result = events[-1]['result']
+    assert result['applied'] is False and 'Aucun modèle' in result['warning']
+
+
+def test_profile_refine_stream_rejects_empty_instruction(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    r = c.post('/api/profile/refine/stream', json={'instruction': '  ', 'data': {}})
+    assert r.status_code == 200
+    events = _frames(r.text)
+    assert events[-1]['type'] == 'error' and 'Consigne' in events[-1]['message']
+
+
+def test_search_now_stream_shows_url_and_request_steps(tmp_path, monkeypatch):
+    """Le flux veille détaille la génération d'URLs puis chaque appel réseau."""
+    from app import websearch
+    from app.scrapers import DEFAULT_SOURCES
+    from tests.test_websearch import _fake_geo
+    monkeypatch.setenv('JOBWATCH_WEB_CACHE_DIR', str(tmp_path / 'cache'))
+    for var in ('FRANCE_TRAVAIL_TOKEN', 'ADZUNA_APP_ID', 'ADZUNA_APP_KEY'):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(websearch, 'fetch_page', _fake_geo)
+    c = _client(tmp_path, monkeypatch)
+    d = main.db()
+    d.add(Profile(status='validated', data={'metiers_vises': ['Data analyst'],
+                                            'localisation': 'Paris'}))
+    d.commit()
+    r = c.post('/api/search-now/stream', params={'source': 'web'})
+    assert r.status_code == 200
+    events = _frames(r.text)
+    steps = [e['step'] for e in events if e['type'] == 'progress']
+    assert steps[0] == 'start'
+    assert 'urls_start' in steps and 'urls_ready' in steps
+    ready = next(e for e in events if e.get('step') == 'urls_ready')
+    starts = [e for e in events if e.get('step') == 'request_start']
+    # 1 métier × 1 zone × les sources HTML par défaut = autant d'URLs que d'appels.
+    assert ready['requests'] == len(starts) == len(DEFAULT_SOURCES)
+    for i, e in enumerate(starts, 1):
+        assert e['url'] and e['index'] == i and e['total'] == len(starts)
+    finished = [e for e in events
+                if e.get('step') in ('request_done', 'request_error')]
+    assert len(finished) == len(starts)
+    assert events[-1]['type'] == 'done'

@@ -171,6 +171,22 @@ def register_connector(name: str, fn) -> None:
     CONNECTORS[name] = fn
 
 
+def fetch_one(profile: dict, name: str) -> tuple[list[dict] | None, str | None]:
+    """Interroge UN connecteur : ``(offres|None, erreur|None)``, sans jamais lever.
+
+    Permet aux endpoints streamés d'émettre un événement *avant* l'appel
+    réseau puis un autre portant le résultat, une source à la fois. Une source
+    en échec ne bloque jamais les autres.
+    """
+    fn = CONNECTORS.get(str(name).strip().lower())
+    if fn is None:
+        return None, "connecteur inconnu"
+    try:
+        return fn(profile) or [], None
+    except Exception as exc:  # une source en échec ne bloque pas les autres
+        return None, str(exc)
+
+
 def fetch_iter(profile: dict, sources: list[str] | None = None):
     """Itère sur les sources et yield ``(name, offres|None, erreur|None)``.
 
@@ -180,14 +196,8 @@ def fetch_iter(profile: dict, sources: list[str] | None = None):
     """
     wanted = sources_for(profile) if sources is None else [str(x).strip().lower() for x in sources]
     for name in wanted:
-        fn = CONNECTORS.get(name)
-        if fn is None:
-            yield name, None, "connecteur inconnu"
-            continue
-        try:
-            yield name, fn(profile) or [], None
-        except Exception as exc:  # une source en échec ne bloque pas les autres
-            yield name, None, str(exc)
+        got, err = fetch_one(profile, name)
+        yield name, got, err
 
 
 def fetch(profile: dict, sources: list[str] | None = None) -> tuple[list[dict], dict]:

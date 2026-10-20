@@ -108,5 +108,31 @@ def test_evaluate_parses_response_and_retries(monkeypatch):
     assert len(seen) == 2 and seen[-1].url.path == '/api/alpha/decisions'
     assert seen[-1].url.scheme == 'https' and seen[-1].url.host == 'openrouter.ai'
     assert seen[-1].headers['authorization'] == 'Bearer k'
-    assert json.loads(seen[-1].content)['model'] == 'typesafe/jev-1.13'
+    assert json.loads(seen[-1].content)['model'] == 'typesafe/jev-1.14'
     assert out == {'intitule': {'score': 2.5, 'max': 3, 'confidence': 0.7}}
+
+
+def test_evaluate_reports_error_body(monkeypatch):
+    """Un 401 doit exposer la réponse du serveur (diagnostic de clé invalide)."""
+    monkeypatch.setenv('OPENROUTER_API_KEY', 'k')
+    monkeypatch.delenv('TYPESAFE_API_KEY', raising=False)
+
+    def handler(request):
+        return httpx.Response(401, json={'error': {'message': 'Missing Authentication header'}})
+
+    payload = jev.build_payload(OFFER, PROFILE)
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(httpx.HTTPStatusError) as excinfo:
+            jev.evaluate(payload, client)
+    msg = str(excinfo.value)
+    assert '401' in msg and 'Missing Authentication header' in msg
+
+
+def test_legacy_typesafe_base_url(monkeypatch):
+    monkeypatch.delenv('JEV_BASE_URL', raising=False)
+    monkeypatch.delenv('TYPESAFE_BASE_URL', raising=False)
+    assert jev.base_url() == 'https://openrouter.ai/api'
+    monkeypatch.setenv('TYPESAFE_BASE_URL', 'https://legacy.example/api/')  # ancien nom
+    assert jev.base_url() == 'https://legacy.example/api'
+    monkeypatch.setenv('JEV_BASE_URL', 'https://new.example/api')  # le canonique gagne
+    assert jev.base_url() == 'https://new.example/api'

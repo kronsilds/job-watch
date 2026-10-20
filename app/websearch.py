@@ -45,6 +45,8 @@ from urllib.robotparser import RobotFileParser
 
 import httpx
 
+from .progress import P
+
 try:
     from bs4 import BeautifulSoup
 except ImportError:  # pragma: no cover - dépendance listée dans requirements
@@ -1219,18 +1221,44 @@ def _normalize_all(raw_items: list[dict], source: str) -> list[dict]:
     return [normalize(item, source) for item in raw_items[:cap]]
 
 
-def scrape_matrix(profile: dict, sources: list[str] | None = None
-                  ) -> tuple[list[dict], dict]:
-    """Exécute la matrice métier × zone × source (cœur n8n porté en Python).
+def scrape_matrix_steps(profile: dict, sources: list[str] | None = None):
+    """Matrice métier × zone × source **en flux** (cœur n8n porté en Python).
 
-    Retourne ``(brutes, {"summary": …, "diagnostics": […]})`` : un diagnostic
-    par URL, jamais d'abandon global sur une requête en échec.
+    Générateur : émet un événement de progression (:class:`app.progress.P`)
+    autour de chaque étape longue —
+
+    * ``urls_start`` / ``urls_ready`` : génération des URLs de recherche
+      (métier × zone), avec le nombre de requêtes préparées par source ;
+    * ``request_start`` : appel réseau en cours (« Requête i/N — source :
+      métier — zone… » + URL) ;
+    * ``request_done`` / ``request_error`` : résultat de la requête (statut,
+      nombre d'offres extraites, message d'échec éventuel).
+
+    et **retourne** ``(brutes, {"summary": …, "diagnostics": […]})`` comme
+    :func:`scrape_matrix` : un diagnostic par URL, jamais d'abandon global sur
+    une requête en échec. Les endpoints streamés relaient les événements tels
+    quels ; :func:`scrape_matrix` (synchrone) les ignore.
     """
+    yield P.progress('urls_start',
+                     'Préparation des URLs de recherche (métier × zone)…')
     requests, prep_warnings = build_search_requests(profile, sources)
+    per_source: dict[str, int] = {}
+    for req in requests:
+        per_source[req['source']] = per_source.get(req['source'], 0) + 1
+    breakdown = ', '.join(f'{k} ({v})' for k, v in per_source.items())
+    yield P.progress('urls_ready',
+                     f'{len(requests)} recherche(s) préparée(s) : {breakdown}.',
+                     requests=len(requests), sources=per_source)
     raws: list[dict] = []
     diagnostics: list[dict] = []
     seen: set[str] = set()
-    for request in requests:
+    total = len(requests)
+    for i, request in enumerate(requests, 1):
+        source = request.get('source') or ''
+        label = f"{source} : {request.get('query')} — {request.get('location')}"
+        yield P.progress('request_start', f'Requête {i}/{total} — {label}…',
+                         source=source, url=request.get('url'),
+                         index=i, total=total)
         kept, diag = scrape_request(request)
         diagnostics.append(diag)
         for item in kept:
@@ -1240,6 +1268,16 @@ def scrape_matrix(profile: dict, sources: list[str] | None = None
             seen.add(key)
             item["_matrix_source"] = request["source"]
             raws.append(item)
+        status = diag.get("status")
+        msg = f"{label} → {status} ({diag.get('kept', 0)} offre(s))"
+        if status in ("ok", "no_results"):
+            yield P.progress('request_done', msg, source=source, status=status,
+                             url=request.get('url'), index=i, total=total,
+                             kept=diag.get('kept', 0))
+        else:
+            yield P.progress('request_error', msg, source=source, status=status,
+                             error=diag.get('message'), url=request.get('url'),
+                             index=i, total=total)
     summary: dict = {"requests": len(diagnostics), "extracted_unique": len(raws),
                      "incomplete": bool(prep_warnings) or any(
                          d["status"] not in ("ok", "no_results") for d in diagnostics),
@@ -1256,6 +1294,23 @@ def scrape_matrix(profile: dict, sources: list[str] | None = None
         if diag.get("capped"):
             slot["capped"] += 1
     return raws, {"summary": summary, "diagnostics": diagnostics}
+
+
+def scrape_matrix(profile: dict, sources: list[str] | None = None
+                  ) -> tuple[list[dict], dict]:
+    """Exécute la matrice métier × zone × source (version synchrone).
+
+    Retourne ``(brutes, {"summary": …, "diagnostics": […]})`` : un diagnostic
+    par URL, jamais d'abandon global sur une requête en échec. Consomme
+    :func:`scrape_matrix_steps` en ignorant les événements de progression —
+    les endpoints streamés utilisent le générateur directement.
+    """
+    steps = scrape_matrix_steps(profile, sources)
+    while True:
+        try:
+            next(steps)
+        except StopIteration as stop:
+            return stop.value
 
 
 def linkedin(profile: dict) -> list[dict]:

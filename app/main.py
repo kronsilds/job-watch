@@ -13,7 +13,7 @@ from .extract import text_from_file
 from .manual import extract_url, fetch_offer, store_offer, source_label
 from .profile_analysis import analyze_cv, normalize, refine_with_prompt
 from .sources import read_records,upsert_jobs
-from .scrapers import sources_for, fetch_iter, enrich_skills_from_text, MATRIX_CONNECTORS
+from .scrapers import sources_for, fetch_one, enrich_skills_from_text, MATRIX_CONNECTORS
 from .progress import sse,P
 from .scoring import score_all
 from .market import analyze,summarize,analyze_market as market_analyzer
@@ -162,6 +162,34 @@ def put_profile(payload:ProfileUpdate, request:Request):
  d.commit()
  if p.status=='validated':score_all(d,p.data,uid)
  return {'id':p.id,'status':p.status,'data':p.data}
+def _refine_source(payload:ProfileRefinePrompt, uid=None, d=None):
+ """Base factuelle de l'affinage : CV fourni ou CV du profil enregistré."""
+ d=d or db();p=_profile_query(d,uid).first()
+ return payload.source_text or (p.source_text if p else '') or ''
+def _refine_payload(data,meta):
+ """Charge utile commune aux routes /api/profile/refine (synchrone et streamée)."""
+ return {'data':data,'analysis':meta,'applied':meta.get('applied',False),
+         'changes_summary':meta.get('changes_summary') or '','warning':meta.get('warning') or ''}
+def _profile_refine_steps(payload:ProfileRefinePrompt, uid=None):
+ """Affinage IA en flux : préparation → appel du modèle → application des changements.
+
+ La réponse du modèle est normalisée puis présentée à l'utilisateur (aucune
+ écriture en base) ; les étapes sont streamées dans le fil d'activité.
+ """
+ source=_refine_source(payload,uid)
+ yield P.progress('prepare',f'Préparation de la fiche et du CV ({len(source)} caractère(s) de base factuelle)…',cv_chars=len(source))
+ yield P.progress('model','Appel du modèle IA : application de votre consigne à la fiche…',instruction=payload.instruction)
+ try:
+  data,meta=refine_with_prompt(payload.data.model_dump(),payload.instruction,source)
+ except ValueError as e:yield P.error(str(e));return
+ except RuntimeError as e:yield P.error(str(e));return
+ applied=bool(meta.get('applied',False));provider=meta.get('provider') or 'local';model=meta.get('model') or ''
+ label=provider+(' — '+model if model else '')
+ verdict='modifications appliquées.' if applied else 'aucune modification.'
+ yield P.progress('apply',f'Réponse reçue ({label}) : fiche normalisée, {verdict}',provider=provider,model=model,applied=applied)
+ if meta.get('changes_summary'):yield P.progress('summary',meta['changes_summary'])
+ if meta.get('warning'):yield P.progress('warning',meta['warning'])
+ yield P.done(_refine_payload(data,meta))
 @app.post('/api/profile/refine')
 def refine_profile(payload:ProfileRefinePrompt, request:Request):
  """Affine la fiche selon une consigne libre (CV = seule base factuelle).
@@ -169,14 +197,17 @@ def refine_profile(payload:ProfileRefinePrompt, request:Request):
  Rien n'est enregistré : la fiche affinée est renvoyée, l'utilisateur la relit
  puis l'enregistre ou la valide (la validation reste un acte humain).
  """
- d=db();u=current_user(request,d);p=_profile_query(d,_uid(u)).first()
- source=(payload.source_text or (p.source_text if p else '') or '')
+ d=db();u=current_user(request,d)
  try:
-  data,meta=refine_with_prompt(payload.data.model_dump(),payload.instruction,source)
+  data,meta=refine_with_prompt(payload.data.model_dump(),payload.instruction,_refine_source(payload,_uid(u),d))
  except ValueError as e:raise HTTPException(400,str(e))
  except RuntimeError as e:raise HTTPException(502,str(e))
- return {'data':data,'analysis':meta,'applied':meta.get('applied',False),
-         'changes_summary':meta.get('changes_summary') or '','warning':meta.get('warning') or ''}
+ return _refine_payload(data,meta)
+@app.post('/api/profile/refine/stream')
+def refine_profile_stream(payload:ProfileRefinePrompt, request:Request):
+ """:func:`refine_profile` en flux SSE : mêmes étapes et même charge utile finale, avec la progression en direct dans le fil d'activité."""
+ d=db();u=current_user(request,d)
+ return _stream(_safe(_profile_refine_steps(payload,_uid(u))))
 CV_IMPORT_NOTE='Analyse à relire et compléter avant validation : nom, métier principal/secondaire et compétences ont été pré-remplis, aucune donnée ne valide automatiquement le profil.'
 def _cv_import_steps(filename:str,content:bytes):
  yield P.progress('received',f'Fichier reçu : {filename or "CV"} ({max(1,len(content)//1024)} Ko)…',filename=filename or '',size=len(content))
@@ -210,18 +241,15 @@ def _fetch_with_progress(profile_data,source,wanted,with_enrich):
  names=sources_for(profile_data) if wanted is None else [source]
  yield P.progress('start',f'Interrogation de {len(names)} connecteur(s) : {", ".join(names)}…',source=source,sources=names)
  records=[];per_source={}
- # Matrice métier × zone × source (n8n) : un appel agrégé avec diagnostics
- # par requête ; repli connecteur-par-connecteur pour APEC/WTTJ (opt-in).
+ # Matrice métier × zone × source (n8n) : un appel agrégé streamé en direct —
+ # URLs de recherche générées puis une étape par requête réseau ; repli
+ # connecteur-par-connecteur pour APEC/WTTJ (opt-in).
  from . import websearch as _websearch
  matrix_names=[n for n in names if n in MATRIX_CONNECTORS]
  try:
   if matrix_names:
-   raws,detail=_websearch.scrape_matrix(profile_data,matrix_names)
+   raws,detail=yield from _websearch.scrape_matrix_steps(profile_data,matrix_names)
    summary=detail.get('summary',{})
-   for diag in detail.get('diagnostics',[]):
-    st=diag.get('status');msg=f'{diag.get("source")} : {diag.get("query")} — {diag.get("location")} → {st} ({diag.get("kept",0)} offre(s))'
-    if st in ('ok','no_results'):yield P.progress('request_done',msg,source=diag.get('source'),status=st,url=diag.get('url'))
-    else:yield P.progress('request_error',msg,source=diag.get('source'),status=st,error=diag.get('message'),url=diag.get('url'))
    grouped={}
    for raw in raws:
     src=str(raw.get('_matrix_source') or 'web')
@@ -247,16 +275,17 @@ def _fetch_with_progress(profile_data,source,wanted,with_enrich):
   for name in matrix_names:
    if name not in per_source:per_source[name]={'count':0,'error':str(exc)};yield P.progress('source_error',f'{name} : échec — {exc}',source=name,error=str(exc))
  legacy=[n for n in names if n not in MATRIX_CONNECTORS]
- if legacy:
-  for name,got,err in fetch_iter(profile_data,sources=legacy):
-   if err is not None:
-    per_source[name]={'count':0,'error':err};yield P.progress('source_error',f'{name} : échec — {err}',source=name,error=err);continue
-   # Tag transitoire de provenance AVANT dedup (permet le top-N par site).
-   for r in got:
-    try: r.setdefault('_source',name)
-    except Exception: pass
-   records+=got;per_source[name]={'count':len(got),'error':None}
-   yield P.progress('source_done',f'{name} : {len(got)} offre(s).',source=name,count=len(got))
+ for name in legacy:
+  yield P.progress('source_start',f'{name} : interrogation du connecteur…',source=name)
+  got,err=fetch_one(profile_data,name)
+  if err is not None:
+   per_source[name]={'count':0,'error':err};yield P.progress('source_error',f'{name} : échec — {err}',source=name,error=err);continue
+  # Tag transitoire de provenance AVANT dedup (permet le top-N par site).
+  for r in got:
+   try: r.setdefault('_source',name)
+   except Exception: pass
+  records+=got;per_source[name]={'count':len(got),'error':None}
+  yield P.progress('source_done',f'{name} : {len(got)} offre(s).',source=name,count=len(got))
  unique={}
  for x in records:
   if x.get('external_id') and x['external_id'] not in unique: unique[x['external_id']]=x

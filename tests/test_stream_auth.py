@@ -38,3 +38,16 @@ def test_cv_import_stream_requires_token_but_accepts_it(tmp_path, monkeypatch):
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/event-stream")
     assert '"type": "done"' in r.text
+
+
+def test_profile_refine_stream_requires_token_but_accepts_it(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    body = {"instruction": "Recentre", "data": {"jobs": ["Dev"]}}
+    assert c.post("/api/profile/refine/stream", json=body).status_code == 401
+    token = c.post("/api/auth/register",
+                   json={"username": "sami", "password": "secret123"}).json()["token"]
+    r = c.post("/api/profile/refine/stream", json=body,
+               headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/event-stream")
+    assert '"type": "done"' in r.text

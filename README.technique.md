@@ -245,18 +245,23 @@ longue existe aussi en version **streamée** (Server-Sent Events,
 | Route streamée | Étapes diffusées |
 |---|---|
 | `POST /api/cv/import/stream` | fichier reçu → extraction du texte → analyse (LLM/heuristique) → résultat |
-| `POST /api/campaign/run/stream` | connecteurs interrogés un à un (nb d'offres ou erreur par source) → déduplication → pré-notation (top-5/site) → import ciblé → note finale → synthèse et analyse marché → résultat |
+| `POST /api/profile/refine/stream` | préparation fiche + CV (`prepare`) → appel du modèle (`model`) → réponse normalisée (`apply`) → résumé des changements / avertissements → résultat |
+| `POST /api/campaign/run/stream` | URLs de recherche générées (`urls_start` → `urls_ready`, nb de requêtes par source) → chaque requête réseau en direct (`request_start` « Requête i/N » → `request_done`/`request_error` avec statut, URL et nb d'offres) → connecteurs opt-in un à un (`source_start`/`source_done`) → déduplication → pré-notation (top-5/site) → import ciblé → note finale → synthèse et analyse marché → résultat |
 | `POST /api/jobs/import-url/stream` | page du lien collé récupérée → extraction des faits (`extract`) → pré-notation et complétion (`prescore`) → note finale et ajout à la liste (`imported`) → résultat |
 | `POST /api/search-now/stream` | idem veille, sans analyse marché |
 
 Chaque trame est un JSON : `{"type":"progress","step":...,"message":...}`
 (étape en cours), `{"type":"done","result":...}` (même charge utile que les
-routes classiques) ou `{"type":"error","message":...}`. Les routes
-historiques non streamées restent disponibles avec des réponses strictement
-identiques (elles consomment les mêmes générateurs d'étapes). Le dashboard
-utilise les versions streamées et affiche un fil d'activité « agent »
-(panneau flottant en bas à droite : étapes ✓, spinner sur l'étape courante,
-erreurs ✕).
+routes classiques) ou `{"type":"error","message":...}`. Les événements de la
+matrice de scraping portent en plus `index`/`total` (position de la requête),
+`url`, `source`, `status` et `kept` pour situer précisément l'appel en cours.
+Les routes historiques non streamées restent disponibles avec des réponses
+strictement identiques (elles consomment les mêmes générateurs d'étapes —
+`app.websearch.scrape_matrix` est le wrapper synchrone de
+`scrape_matrix_steps`). Le dashboard utilise les versions streamées et affiche
+un fil d'activité « agent » (panneau flottant en bas à droite : étapes ✓,
+spinner sur l'étape courante, erreurs ✕, et sous chaque étape le détail
+quand il existe — URL interrogée, message d'échec).
 
 ## Scoring pondéré par profil
 

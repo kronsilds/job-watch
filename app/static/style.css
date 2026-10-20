@@ -509,6 +509,7 @@ input.visually-hidden:focus-visible+.dropzone,
 .agent-steps li.done::before{content:'✓';color:var(--acid);font-size:11px;line-height:13px;text-align:center}
 .agent-steps li.error{color:var(--danger-soft)}
 .agent-steps li.error::before{content:'✕';color:var(--danger-soft);font-size:11px;line-height:13px;text-align:center}
+.agent-steps li small{display:block;margin-top:2px;font-size:10px;color:#9fb0a4;word-break:break-all}
 @keyframes agentPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.75)}}
 @keyframes agentSpin{to{transform:rotate(360deg)}}
 
