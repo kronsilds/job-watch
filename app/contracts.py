@@ -157,11 +157,30 @@ _BEGINNER = re.compile(
     r"\bentry[- ]level\b|\bgraduate\b|\bno experience required\b")
 _LEVELS = [
     ("lead", r"\blead\b|\bprincipal\b|\bstaff\b|\bhead of\b|\bdirect(?:eur|rice|or)\b|"
-             r"\bchef de (?:projet|service|equipe)\b|\bvp\b"),
+             r"\bchef de (?:service|equipe)\b|\bvp\b"),  # « chef de projet » : un métier, pas un niveau
     ("senior", r"\bsenior\b|\bsr\b|\bconfirme\w*|\bexperimente\w*|\bexpert\w*"),
     ("junior", r"\bjunior\b|\bjr\b|\bdebutant\w*|\bjeune diplome\w*|\bgraduate\b|"
                r"\bentry[- ]level\b"),
 ]
+
+
+# Niveau exigé écrit en toutes lettres dans une description (« profil senior »,
+# « poste junior », « niveau : confirmé ») ; une simple occurrence (« vous
+# travaillerez avec des experts », « le lead vous encadre ») ne compte pas.
+_DESC_LEVEL = re.compile(
+    r"\b(?:profil|poste|niveau|candidat\w*|vous etes)\s*(?:de\s*)?:?\s*"
+    r"(junior|senior|confirme\w*|experimente\w*|debutant\w*)"
+    r"|\b(junior|senior|debutant\w*)s? (?:accepte|exige|requis|souhaite)")
+_DESC_LEVEL_MAP = {"junior": "junior", "debutant": "junior", "senior": "senior",
+                   "confirme": "senior", "experimente": "senior"}
+
+
+def _desc_level(text: str) -> str | None:
+    m = _DESC_LEVEL.search(fold(text))
+    if not m:
+        return None
+    word = m.group(1) or m.group(2)
+    return next((lvl for stem, lvl in _DESC_LEVEL_MAP.items() if word.startswith(stem)), None)
 
 
 def _level_in(text: str) -> str | None:
@@ -179,7 +198,8 @@ def extract_experience(title="", description="") -> dict:
     (fenêtre courte autour du nombre), jamais un âge (« moins de 30 ans ») ni
     l'ancienneté de l'entreprise. ``level`` vient de l'intitulé, sinon de la
     description ; ``beginner_ok`` signale « débutant accepté », « jeune
-    diplômé », « première expérience »…
+    diplômé », « première expérience »… Le niveau lu dans la description
+    exige une tournure explicite (« profil senior »), pas un simple mot.
     """
     low = fold(f"{title or ''} \n {description or ''}")
     years: list[float] = []
@@ -193,7 +213,7 @@ def extract_experience(title="", description="") -> dict:
         value = float(m.group(1).replace(",", "."))
         if 0 < value <= 30:
             years.append(value)
-    level = _level_in(title) or _level_in(description)
+    level = _level_in(title) or _desc_level(description)
     beginner = bool(_BEGINNER.search(low))
     if beginner and level is None:
         level = "junior"
@@ -282,8 +302,12 @@ def assess(job, profile: dict) -> dict:
     years = _profile_years(profile)
     min_years, level = xp["min_years"], xp["level"]
     if student_mode(profile):
+        # Une offre explicitement en stage/alternance s'adresse à des étudiants :
+        # seul un nombre d'années exigé la rend incompatible, pas l'intitulé
+        # (« Alternance - Tech Lead », « Chef de projet digital en alternance »).
+        student_offer = bool(types) and set(types) <= STUDENT_TYPES
         too_much = (min_years is not None and min_years >= STUDENT_MAX_YEARS) or \
-            level in ("senior", "lead")
+            (level in ("senior", "lead") and not student_offer)
         if too_much:
             experience_ok, fit = False, 0.0
             reasons.append("expérience exigée ("

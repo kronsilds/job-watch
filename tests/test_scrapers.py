@@ -15,7 +15,7 @@ def test_sources_and_metiers_from_profile():
     p = {"metiers_vises": ["Data analyst", "BI analyst"], "sources": "france_travail, adzuna"}
     assert sources_for(p) == ["france_travail", "adzuna"]
     assert metiers_for(p) == ["Data analyst", "BI analyst"]
-    assert sources_for({}) == ["france_travail", "hellowork", "linkedin", "adzuna", "indeed"]
+    assert sources_for({}) == ["france_travail", "hellowork", "linkedin", "adzuna", "indeed", "wttj"]
 
 
 def test_normalize_uses_hash_external_id():

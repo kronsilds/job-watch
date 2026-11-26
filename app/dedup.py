@@ -145,6 +145,11 @@ def _get(job, key, default=""):
     return getattr(job, key, default)
 
 
+# Agrégateurs qui relaient la même offre depuis plusieurs partenaires sous des
+# liens différents : la règle « même site, deux liens » ne s'y applique pas.
+AGGREGATOR_SOURCES = {"labonnealternance"}
+
+
 def source_conflict(sources_a, sources_b) -> bool:
     """Vrai si un même site affiche les deux offres sous des liens différents.
 
@@ -155,6 +160,8 @@ def source_conflict(sources_a, sources_b) -> bool:
     """
     by_site: dict[str, set[str]] = {}
     for site, url in sources_a:
+        if site in AGGREGATOR_SOURCES:
+            continue
         if site and canonical_url(url):
             by_site.setdefault(site, set()).add(canonical_url(url))
     for site, url in sources_b:

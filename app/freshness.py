@@ -83,6 +83,15 @@ def _num(raw: str) -> int:
     return 1 if raw in ("un", "une", "a", "an", "one") else int(raw)
 
 
+def _epoch(value) -> datetime | None:
+    """Horodatage Unix en secondes ou millisecondes → datetime UTC."""
+    try:
+        seconds = float(value) / (1000 if float(value) > 1e11 else 1)
+        return datetime.fromtimestamp(seconds, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
 def _midnight(dt: datetime) -> datetime:
     return dt.replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -96,10 +105,20 @@ def parse_date(value, now: datetime | None = None) -> datetime | None:
     """
     if isinstance(value, datetime):
         return aware(value)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return _epoch(value)
     text = str(value or "").strip()
     if not text:
         return None
     now = aware(now) or utcnow()
+    if re.fullmatch(r"\d{10}|\d{13}", text):  # horodatage Unix (s ou ms, API Lever)
+        return _epoch(int(text))
+    if re.match(r"^[A-Za-z]{3}, \d{1,2} [A-Za-z]{3} \d{4}", text):  # RFC 822 (flux RSS)
+        from email.utils import parsedate_to_datetime
+        try:
+            return aware(parsedate_to_datetime(text)).astimezone(timezone.utc)
+        except (TypeError, ValueError):
+            pass
     m = _ISO.search(text)
     if m:
         try:

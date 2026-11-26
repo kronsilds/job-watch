@@ -166,7 +166,7 @@ def test_profile_refine_stream_rejects_empty_instruction(tmp_path, monkeypatch):
 def test_search_now_stream_shows_url_and_request_steps(tmp_path, monkeypatch):
     """Le flux veille détaille la génération d'URLs puis chaque appel réseau."""
     from app import websearch
-    from app.scrapers import DEFAULT_SOURCES
+    from app.scrapers import DEFAULT_SOURCES, MATRIX_CONNECTORS
     from tests.test_websearch import _fake_geo
     monkeypatch.setenv('JOBWATCH_WEB_CACHE_DIR', str(tmp_path / 'cache'))
     for var in ('FRANCE_TRAVAIL_TOKEN', 'ADZUNA_APP_ID', 'ADZUNA_APP_KEY'):
@@ -185,8 +185,10 @@ def test_search_now_stream_shows_url_and_request_steps(tmp_path, monkeypatch):
     assert 'urls_start' in steps and 'urls_ready' in steps
     ready = next(e for e in events if e.get('step') == 'urls_ready')
     starts = [e for e in events if e.get('step') == 'request_start']
-    # 1 métier × 1 zone × les sources HTML par défaut = autant d'URLs que d'appels.
-    assert ready['requests'] == len(starts) == len(DEFAULT_SOURCES)
+    # 1 métier × 1 zone × les sources HTML (matrice) par défaut = autant d'URLs
+    # que d'appels ; WTTJ (sitemap) est interrogé à part.
+    matrix = [s for s in DEFAULT_SOURCES if s in MATRIX_CONNECTORS]
+    assert ready['requests'] == len(starts) == len(matrix)
     for i, e in enumerate(starts, 1):
         assert e['url'] and e['index'] == i and e['total'] == len(starts)
     finished = [e for e in events

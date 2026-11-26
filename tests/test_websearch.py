@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from app import websearch
-from app.scrapers import CONNECTORS, DEFAULT_SOURCES, fetch
+from app.scrapers import CONNECTORS, DEFAULT_SOURCES, MATRIX_CONNECTORS, fetch
 from app.websearch import (
     BudgetExceeded,
     RobotsBlocked,
@@ -356,7 +356,7 @@ def test_fetch_aggregates_matrix_sources(tmp_path, monkeypatch):
 
     monkeypatch.setattr(websearch, "fetch_page", _fake_geo)
 
-    offers, report = fetch(PROFILE)  # les 5 sources matrice par défaut
+    offers, report = fetch(PROFILE)  # les 5 sources matrice + WTTJ (sitemap)
     assert report["total_unique"] == len(offers)
     assert set(report["sources"].keys()) == set(DEFAULT_SOURCES)
     # chaque source a trouvé exactement son offre fixture
@@ -364,8 +364,9 @@ def test_fetch_aggregates_matrix_sources(tmp_path, monkeypatch):
         assert report["sources"][name]["error"] is None, name
         assert report["sources"][name]["count"] == 1, name
     # la matrice a préparé 1 métier × 1 zone × 5 sources = 5 requêtes
-    assert report["matrix"]["requests"] == len(DEFAULT_SOURCES)
-    assert len(report["diagnostics"]) == len(DEFAULT_SOURCES)
+    matrix = [s for s in DEFAULT_SOURCES if s in MATRIX_CONNECTORS]
+    assert report["matrix"]["requests"] == len(matrix) == 5
+    assert len(report["diagnostics"]) == len(matrix)
     sources_renvoyees = {o["url"].split("/")[2] for o in offers}
     assert any("linkedin" in u for u in sources_renvoyees)
     assert all(o["title"] for o in offers)

@@ -38,7 +38,7 @@ import random
 import re
 import time
 import unicodedata
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import quote_plus, urljoin, urlparse
 from urllib.robotparser import RobotFileParser
@@ -553,7 +553,7 @@ def build_search_requests(profile: dict, sources: list[str] | None = None,
     Lève :class:`FairUseError` si aucun métier ou aucune recherche possible,
     et plafonne à ``MAX_SEARCH_REQUESTS`` (200, garde-fou n8n).
     """
-    from .scrapers import sources_for  # import différé (cycle)
+    from .scrapers import CONNECTORS, sources_for  # import différé (cycle)
     metiers = _metiers_from_profile(profile)
     if not metiers:
         raise FairUseError("aucun métier cible dans le profil pour la veille web")
@@ -565,7 +565,7 @@ def build_search_requests(profile: dict, sources: list[str] | None = None,
               for s in (sources if sources is not None else sources_for(profile))]
     known = [s for s in wanted if s in MATRIX_SOURCES]
     for raw in wanted:
-        if raw and raw not in MATRIX_SOURCES and raw not in ("apec", "wttj"):
+        if raw and raw not in MATRIX_SOURCES and raw not in CONNECTORS:
             prep_warnings.append(f"Source inconnue ignorée : {raw}")
     if not known:
         raise FairUseError("aucune source HTML reconnue : " + " ".join(prep_warnings))
@@ -1187,18 +1187,66 @@ def parse_sitemap_entries(xml_text: str) -> list[tuple[str, str]]:
     return out
 
 
+_MATCH_STOP = {"de", "du", "la", "le", "les", "des", "en", "et", "un", "une", "au", "aux",
+               "of", "at", "to", "in", "an", "or", "on", "the", "and", "for", "with", "pour",
+               "par", "sur", "hf", "fh"}
+
+
+def _match_tokens(text: str) -> set[str]:
+    """Racines des mots porteurs (« développeur » et « développeuse » → « develo »).
+
+    Les sigles de deux lettres comptent (« AI Engineer » ≠ « Sales Engineer »,
+    « BI », « UX », « RH »), pas les mots vides.
+    """
+    words = re.split(r"[^a-z0-9+#]+", _strip_accents(str(text or "").lower()))
+    return {w[:6] if len(w) >= 6 else w for w in words
+            if len(w) >= 2 and w not in _MATCH_STOP}
+
+
+def matches_metiers(title: str, metiers: list[str]) -> bool:
+    """Vrai si l'intitulé contient tous les mots (racines) d'au moins un métier."""
+    needs = [_match_tokens(m) for m in metiers if str(m or "").strip()]
+    needs = [n for n in needs if n]
+    if not needs:
+        return True
+    have = _match_tokens(title)
+    return any(n <= have for n in needs)
+
+
 def wttj_keyword_filter(items: list[dict], metiers: list[str]) -> list[dict]:
     """Garde les offres dont le titre matche tous les mots d'au moins un métier."""
-    def tokens(text: str) -> set[str]:
-        words = _strip_accents(text.lower()).split()
-        return {w for w in (re.sub(r"[^a-z0-9]", "", w) for w in words) if len(w) >= 3}
-    metier_tokens = [tokens(m) for m in metiers if m.strip()]
-    if not metier_tokens:
-        return items
+    return [item for item in items if matches_metiers(item.get("title", ""), metiers)]
+
+
+def rank_by_place_and_date(items: list[dict], profile: dict) -> list[dict]:
+    """Offres de la zone du profil d'abord, puis les plus récentes.
+
+    Les sources nationales (sitemap WTTJ, pages carrières) n'ont pas de
+    filtre géographique : sans ce tri, le plafond par source pourrait ne
+    garder que des offres lointaines.
+    """
+    from .dedup import place_tokens
+    from .freshness import parse_date
+    from .scrapers import locations_for  # import différé (cycle)
+    wanted: set[str] = set()
+    for loc in locations_for(profile):
+        wanted |= place_tokens(loc)
+
+    def key(item):
+        near = bool(wanted & place_tokens(item.get("location") or ""))
+        when = parse_date(item.get("published_at"))
+        return (near, when.timestamp() if when else 0.0)
+    return sorted(items, key=key, reverse=True)
+
+
+def drop_stale(items: list[dict], profile: dict) -> list[dict]:
+    """Retire les offres dont la date connue dépasse l'âge maximum du profil."""
+    from .freshness import max_age_days, parse_date, utcnow
+    limit = utcnow() - timedelta(days=max_age_days(profile))
     out = []
     for item in items:
-        titre = tokens(item.get("title", ""))
-        if any(need and need <= titre for need in metier_tokens):
+        when = parse_date(item.get("published_at"))
+        if when is None or when >= limit:
             out.append(item)
     return out
 
@@ -1429,15 +1477,19 @@ def wttj(profile: dict) -> list[dict]:
     """Welcome to the Jungle via le sitemap officiel.
 
     Le robots.txt interdit ``*/jobs?query=*`` (page de recherche avec query
-    string) : on respecte cette interdiction et on utilise le sitemap
-    explicitement fourni par le site, filtré localement par mots-clés.
+    string) et les pages d'offres refusent les clients automatiques (HTTP
+    403) : on utilise uniquement le sitemap explicitement fourni aux robots.
+    Chaque URL donne l'intitulé, l'entreprise, la ville et ``<lastmod>`` ; les
+    offres sont filtrées par métier (racines des mots) et par fraîcheur, puis
+    classées zone du profil d'abord, plus récentes ensuite.
     """
     from .scrapers import metiers_for  # import différé (cycle)
     ttl_sitemap = _env_int("JOBWATCH_WEB_SITEMAP_TTL", 43200)
     index = fetch_page(WTTJ_SITEMAP_INDEX, ttl=ttl_sitemap)
     shards = [loc for loc in re.findall(r"<loc>([^<]+)</loc>", index)
               if "job-listings" in loc]
-    max_shards = max(1, min(_env_int("JOBWATCH_WTTJ_SITEMAP_SHARDS", 1), len(shards) or 1, 3))
+    # Chaque morceau (~10 000 offres) coûte une requête du quota quotidien.
+    max_shards = max(1, min(_env_int("JOBWATCH_WTTJ_SITEMAP_SHARDS", 3), len(shards) or 1, 24))
     items: list[dict] = []
     for shard in shards[:max_shards]:
         xml_text = fetch_page(shard, ttl=ttl_sitemap)
@@ -1449,6 +1501,7 @@ def wttj(profile: dict) -> list[dict]:
                 item["published_at"] = lastmod
                 items.append(item)
     items = wttj_keyword_filter(items, metiers_for(profile))
+    items = rank_by_place_and_date(drop_stale(items, profile), profile)
     return _normalize_all(items, "wttj")
 
 

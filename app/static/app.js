@@ -1,7 +1,7 @@
 let sourceText='', profileAnalysis={};
 let currentProfileStatus='draft', lastOverview=null, lastReport=null;
 const $=id=>document.getElementById(id);
-const fields=['jobs','adjacent_jobs','metiers_vises','locations','remote','contracts','sectors','exclusions','skills','sources','seniorite'];
+const fields=['jobs','adjacent_jobs','metiers_vises','locations','remote','contracts','sectors','exclusions','skills','sources','seniorite','career_pages','romes'];
 const SKILL_LEVELS=['débutant','opérationnel','confirmé','expert','à confirmer'];
 function message(text,kind='ok'){const n=$('notice');n.textContent=text;n.className='notice '+kind;n.hidden=false;setTimeout(()=>n.hidden=true,4500)}
 function split(value){return value.split(/[\n,]+/).map(x=>x.trim()).filter(Boolean)}
@@ -112,7 +112,7 @@ function safe(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&
 function fmtSal(min,max){const e=n=>n?Math.round(n).toLocaleString('fr-FR')+' €':'';
   if(min&&max)return e(min)+' – '+e(max);if(min)return 'dès '+e(min);if(max)return 'jusqu’à '+e(max);return ''}
 /* --------------------------------------- offre : dates, source, explication */
-const SOURCE_LABELS={france_travail:'France Travail',adzuna:'Adzuna',linkedin:'LinkedIn',indeed:'Indeed',wttj:'Welcome to the Jungle',apec:'APEC',hellowork:'HelloWork',demo:'Jeu de démonstration',file:'Fichier local',lien:'Lien collé'};
+const SOURCE_LABELS={france_travail:'France Travail',adzuna:'Adzuna',linkedin:'LinkedIn',indeed:'Indeed',wttj:'Welcome to the Jungle',apec:'APEC',hellowork:'HelloWork',demo:'Jeu de démonstration',file:'Fichier local',lien:'Lien collé',labonnealternance:'La bonne alternance',career_pages:'Page carrières'};
 const DECISION_LABELS={new:'Nouvelle',retained:'Retenue',ignored:'Ignorée'};
 const DIM_LABELS={competences:'Compétences',intitule:'Métier & missions',experience:'Expérience / séniorité',localisation:'Localisation & remote',contrat:'Type de contrat',salaire:'Salaire',secteur:'Secteur'};
 function parseDate(iso){if(!iso)return null;const d=new Date(String(iso).replace(/(\.\d{3})\d+/,'$1'));return isNaN(d)?null:d}

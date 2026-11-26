@@ -12,8 +12,10 @@ CV et de l'annonce (aucune expérience ni compétence inventée).
 
 - **Importer votre CV** (PDF, DOCX ou TXT) : un profil est extrait, vous le
   relisez, l'ajustez, puis le validez.
-- **Surveiller les offres** : jeu de démonstration hors-ligne, ou veille web
-  (France Travail, Adzuna, LinkedIn, Indeed, HelloWork).
+- **Surveiller les offres** : veille web (France Travail, Adzuna, LinkedIn,
+  Indeed, HelloWork, Welcome to the Jungle), La bonne alternance si vous
+  cherchez une alternance, et les pages carrières des entreprises que vous
+  ciblez (Greenhouse, Lever, Ashby, SmartRecruiters, Teamtailor…).
 - **Ajouter une annonce trouvée ailleurs** en collant simplement son lien.
 - **Obtenir une note de 0 à 10 par offre**, avec l'explication (compétences
   communes, manques, critères bloquants) et des pondérations réglables.
@@ -146,6 +148,7 @@ commitez jamais.
 | Note finale par Jev (OpenRouter) | `OPENROUTER_API_KEY=sk-or-...` |
 | Veille France Travail (API officielle) | `FRANCE_TRAVAIL_TOKEN` |
 | Veille Adzuna (API publique) | `ADZUNA_APP_ID`, `ADZUNA_APP_KEY` |
+| Offres d'alternance (La bonne alternance, clé gratuite sur api.apprentissage.beta.gouv.fr) | `LBA_API_KEY` |
 | Se passer de compte (usage solo) | `JOBWATCH_SINGLE_USER=1` |
 | Changer d'adresse / de port | `JOBWATCH_HOST`, `JOBWATCH_PORT` |
 | Âge maximum par défaut des annonces | `JOBWATCH_MAX_AGE_DAYS=45` |

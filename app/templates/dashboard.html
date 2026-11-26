@@ -50,13 +50,15 @@
           <details class="profile-details">
             <summary>Affiner la recherche <span>Sources, séniorité et mobilité</span></summary>
             <div class="form-grid details-content">
-              <label class="field field--wide"><span>Sources (connecteurs)</span><textarea id="sources" rows="2" placeholder="france_travail, adzuna, linkedin, wttj…"></textarea></label>
+              <label class="field field--wide"><span>Sources (connecteurs)</span><textarea id="sources" rows="2" placeholder="france_travail, hellowork, linkedin, adzuna, indeed, wttj"></textarea><small class="hint">Vide = ces 6 sources. Disponibles aussi : apec. Ajoutées d'office : La bonne alternance (profil alternance + clé LBA_API_KEY) et vos pages carrières.</small></label>
               <label class="field"><span>Séniorité</span><textarea id="seniorite" rows="2" placeholder="junior, confirmé, senior, lead"></textarea></label>
               <label class="field field--wide"><span>Métiers visés (veille)</span><textarea id="metiers_vises" rows="2" placeholder="Architecte logiciel&#10;Tech Lead"></textarea><small class="hint">Mots-clés envoyés aux connecteurs. Vide = les métiers recherchés ci-dessus sont utilisés.</small></label>
               <label class="field"><span>Secteurs d'activité du parcours</span><textarea id="sectors" rows="3" placeholder="Santé&#10;Télécommunications"></textarea></label>
               <label class="field"><span>Exclusions (mots-clés)</span><textarea id="exclusions" rows="3" placeholder="défense&#10;jeux d'argent"></textarea><small class="hint">Une offre contenant un de ces mots est plafonnée par le scoring.</small></label>
               <label class="field"><span>Salaire minimum annuel (€)</span><input id="salary_min" type="number" min="0" step="1000" placeholder="60000"></label>
               <label class="field"><span>Salaire maximum annuel (€)</span><input id="salary_max" type="number" min="0" step="1000" placeholder="90000"></label>
+              <label class="field field--wide"><span>Pages carrières à suivre</span><textarea id="career_pages" rows="3" placeholder="https://jobs.lever.co/entreprise&#10;https://boards.greenhouse.io/entreprise&#10;https://entreprise.teamtailor.com"></textarea><small class="hint">Une URL par ligne : Greenhouse, Lever, Ashby, SmartRecruiters, Teamtailor, ou toute page carrières qui publie ses offres en données structurées (JobPosting). Interrogées à chaque veille.</small></label>
+              <label class="field"><span>Codes ROME (alternance)</span><textarea id="romes" rows="2" placeholder="M1805"></textarea><small class="hint">Facultatif, pour La bonne alternance (clé LBA_API_KEY). Vide = filtre par métier.</small></label>
               <label class="field"><span>Âge maximum des annonces (jours)</span><input id="max_age_days" type="number" min="1" step="1" placeholder="45"><small class="hint">Au-delà, une annonce est masquée (publication, date limite ou dernière apparition en veille). Vide = 45 jours.</small></label>
               <label class="field field--wide"><span>Mobilité</span><textarea id="mobility" placeholder="Ex. France entière, 2 jours de déplacement par semaine"></textarea><small class="hint">Contraintes de déplacement, rythme accepté, régions exclues.</small></label>
             </div>
@@ -138,4 +140,4 @@
     <div class="agent-feed-head"><span class="agent-dot" aria-hidden="true"></span><strong id="agentFeedTitle">Agent</strong><button type="button" class="agent-close" onclick="closeAgentFeed()" aria-label="Fermer le fil d'activité">✕</button></div>
     <ol id="agentFeedSteps" class="agent-steps"></ol>
   </aside>
-<script src="/static/app.js?v=14"></script></body></html>
+<script src="/static/app.js?v=15"></script></body></html>

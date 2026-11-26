@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
-from . import contracts, jev
+from . import contracts, geo_fr, jev
 from .skills import match_skills
 
 logger = logging.getLogger(__name__)
@@ -85,6 +85,11 @@ def score_job(job, p):
         # ("Lyon" vs "Paris") reste un mismatch non bloquant à neutre.
         loc_ok = (not locs) or "remote" in remote or any(
             l in loc or loc in l for l in locs)
+        if loc_ok is False and geo_fr.compatible(p.get("locations", []),
+                                                 _get(job, "location", "")):
+            # Même département : « Clichy (92110) » est dans « Hauts-de-Seine »,
+            # « 75 - Paris 12e » dans « Île-de-France ».
+            loc_ok = True
 
     # Contrat et expérience : taxonomie canonique (CDI, CDD, stage,
     # alternance…) et expérience exigée lue dans l'annonce (app/contracts.py).

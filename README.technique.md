@@ -133,9 +133,10 @@ Le connecteur (`app/scrapers.py` + `app/websearch.py`) est **générique et conf
   | Indeed | page de recherche classique (si non bloquée par l'anti-bot) |
   | HelloWork | page de recherche classique (cartes rendues côté serveur) |
 
-  APEC (webservice JSON) et WTTJ (**sitemap officiel** filtré par mots-clés,
-  robots.txt interdisant `*/jobs?query=*`) restent disponibles en **opt-in**
-  explicite (`sources: ["apec", "wttj"]`) car plus fragiles.
+  **WTTJ** fait partie des sources par défaut via son **sitemap officiel**
+  (voir « Sources complémentaires »). APEC (webservice JSON) reste en
+  **opt-in** explicite (`sources: [..., "apec"]`). **La bonne alternance** et
+  les **pages carrières** sont ajoutées d'office quand le profil s'y prête.
 - **Lieux résolus** via `geo.api.gouv.fr` (département `75D`, région `11R`,
   commune INSEE) : France Travail utilise le code lieu + `rayon=10` +
   `offresPartenaires=true`, LinkedIn applique `f_WT=2` en full-remote.
@@ -158,6 +159,48 @@ Le connecteur (`app/scrapers.py` + `app/websearch.py`) est **générique et conf
 - Normalisation vers le schéma `Job` + **déduplication par hash**
   (`external_id`). Option `enrich_skills>true` : complète les skills d'une offre
   depuis sa description via le lexique généraliste.
+
+### Sources complémentaires : WTTJ, La bonne alternance, pages carrières
+
+| Connecteur | Méthode | Activation |
+|---|---|---|
+| `wttj` | sitemap officiel (`index.xml.gz` → morceaux `job-listings.N.xml.gz`, ~10 000 offres chacun) | par défaut |
+| `labonnealternance` | API de l'État `GET https://api.apprentissage.beta.gouv.fr/api/job/v1/search` (`Authorization: Bearer`) | profil qui cherche une alternance **et** `LBA_API_KEY` |
+| `career_pages` | flux publics des plateformes de recrutement, sinon JSON-LD `JobPosting` de la page | profil avec `career_pages` |
+
+- **WTTJ** (`app/websearch.py::wttj`) : robots.txt interdit la recherche
+  (`*/jobs?query=*`) et les pages d'offres refusent les clients automatiques
+  (HTTP 403) ; seul le sitemap, fourni aux robots, est lu. Chaque URL donne
+  intitulé, entreprise, ville et `<lastmod>` (date de fraîcheur). Filtres :
+  métier (racines des mots : « développeuse » ≈ « développeur », sigles de
+  deux lettres pris en compte), âge maximum du profil ; tri : zone du profil
+  d'abord, plus récentes ensuite. `JOBWATCH_WTTJ_SITEMAP_SHARDS` (défaut 3,
+  max 24) morceaux lus, chacun une requête du quota, cache 12 h.
+- **La bonne alternance** (`app/lba.py`) : clé gratuite (usage non lucratif)
+  sur https://api.apprentissage.beta.gouv.fr (« Se connecter / S'inscrire »).
+  Filtres envoyés : `departements` déduits des zones du profil (une région
+  devient la liste de ses départements via geo.api.gouv.fr) et `romes` :
+  ceux du profil (`data["romes"]`), sinon trouvés depuis les métiers via la
+  route publique `GET https://labonnealternance.apprentissage.beta.gouv.fr/api/rome?title=…`
+  (sans clé, cache 7 jours ; premier groupe proposé, ex. « développeur web »
+  → « Développement web, intégration » → M1805…). Avec des codes ROME, l'API
+  cible le métier et la notation trie ; sans (recherche indisponible), elle
+  renvoie tous les métiers de la zone, filtrés alors par intitulé. Une même
+  offre relayée par deux partenaires (France Travail, HelloWork…) n'est
+  gardée qu'une fois. Seules les offres `jobs` au statut
+  `Active` sont reprises (les « recruteurs » sans offre sont ignorés) ; dates
+  `publication.creation` / `publication.expiration`, contrat « alternance
+  (apprentissage / professionnalisation) », lien `apply.url`. Appel direct à
+  l'API (comme France Travail/Adzuna), hors quota web.
+- **Pages carrières** (`app/careers.py`) : `data["career_pages"]` (une URL par
+  ligne dans le profil). Plateforme détectée par l'URL : Greenhouse
+  (`boards-api.greenhouse.io/v1/boards/{x}/jobs?content=true`), Lever
+  (`api.lever.co/v0/postings/{x}?mode=json`, `api.eu.lever.co` pour
+  `jobs.eu.lever.co`), Ashby (`api.ashbyhq.com/posting-api/job-board/{x}`),
+  SmartRecruiters (`api.smartrecruiters.com/v1/companies/{x}/postings`),
+  Teamtailor (flux `{site}/jobs.rss`) ; toute autre page : JSON-LD
+  `JobPosting`. Une requête par page via `fetch_page` (charte fair use) ; une
+  page en échec n'empêche pas les autres. Mêmes filtres et tri que WTTJ.
 
 ### Ajouter une annonce repérée soi-même (lien collé)
 
@@ -245,13 +288,17 @@ plus pris pour un stage.
 L'expérience exigée (`extract_experience`) : années accolées à « expérience »
 (« 5 ans d'expérience minimum », « 3+ years », « Expérience exigée de 2
 An(s) »), jamais un âge (« moins de 30 ans ») ni l'ancienneté de l'entreprise ;
-niveau tiré de l'intitulé (senior / lead / junior) ; « débutant accepté ».
+niveau tiré de l'intitulé (senior / lead / junior ; « chef de projet » est un
+métier, pas un niveau), ou d'une tournure explicite de la description
+(« profil senior », « niveau : confirmé » — « vous travaillerez avec des
+experts » ne compte pas) ; « débutant accepté ».
 
 Règles du scoring (`assess`, filtres `contrat` et `expérience`) :
 
 - profil **stage/alternance uniquement** : offre CDI/CDD/freelance → contrat
-  incompatible ; offre exigeant ≥ 2 ans ou de niveau senior/lead → expérience
-  incompatible (note plafonnée à 3.9, motif affiché) ;
+  incompatible ; offre exigeant ≥ 2 ans → expérience incompatible ; niveau
+  senior/lead → incompatible, sauf si l'offre est elle-même un stage ou une
+  alternance (note plafonnée à 3.9, motif affiché) ;
 - autre profil : écart d'expérience ≥ 4 ans → incompatible ; écart de 1-2 ans →
   dimension « expérience » à 5/10 ; surqualification (offre junior, ≥ 8 ans) →
   pénalité douce ;
@@ -271,7 +318,8 @@ normalisation (formes juridiques, « Groupe », « France » retirés ; « Acme 
 inconnu des deux côtés, descriptions très proches ; intitulés proches (sans
 « H/F » ni mention de contrat, Jaccard ≥ 0,75) ; villes compatibles ; contrats
 et niveaux non contradictoires. Un même site qui affiche deux liens différents
-désigne toujours deux offres distinctes.
+désigne toujours deux offres distinctes — sauf La bonne alternance, qui relaie
+la même offre depuis plusieurs partenaires.
 
 À l'import, une diffusion d'un autre site **complète** l'offre existante sans
 rien écraser (description la plus longue, contrat, salaire…). En fin de veille,
@@ -394,6 +442,12 @@ La dimension **expérience** n'est évaluée que par Jev ; en mode heuristique, 
 poids est redistribué.
 
 ### Heuristique
+
+**Localisation** : en plus de la comparaison de texte, deux localisations du
+même département sont compatibles (`app/geo_fr.py`, référentiel statique) :
+codes postaux (« Clichy (92110) »), numéros (« 92 - Clichy », « Paris 02 -
+75 »), noms de départements (« Hauts-de-Seine »), de régions (« Île-de-France »
+→ ses 8 départements) et de grandes villes (« Lyon » → 69).
 
 La dimension **compétences** mesure la **part de la demande de l'offre couverte
 par le profil** (`len(compétences de l'offre couvertes) / len(index de l'offre)`),

@@ -31,7 +31,7 @@ import re
 import httpx
 
 from .prompts import load_keywords
-from . import websearch
+from . import careers, lba, websearch
 
 BASE_FRANCE_TRAVAIL = os.getenv(
     "FRANCE_TRAVAIL_URL",
@@ -39,7 +39,8 @@ BASE_FRANCE_TRAVAIL = os.getenv(
 )
 ADZUNA = "https://api.adzuna.com/v1/api/jobs/fr/search"
 
-DEFAULT_SOURCES = ["france_travail", "hellowork", "linkedin", "adzuna", "indeed"]
+# WTTJ (sitemap officiel) complète les 5 sources de la matrice métier × zone.
+DEFAULT_SOURCES = ["france_travail", "hellowork", "linkedin", "adzuna", "indeed", "wttj"]
 
 # Sources HTML servies par la matrice métier × zone (n8n) — les autres
 # (APEC/WTTJ) gardent leur connecteur historique en opt-in.
@@ -69,11 +70,21 @@ def locations_for(profile: dict) -> list[str]:
 
 
 def sources_for(profile: dict) -> list[str]:
-    """Liste dynamique des connecteurs à interroger, depuis le profil."""
+    """Liste dynamique des connecteurs à interroger, depuis le profil.
+
+    S'y ajoutent automatiquement : ``labonnealternance`` quand le profil
+    cherche une alternance et que ``LBA_API_KEY`` est configurée, et
+    ``career_pages`` quand le profil liste des pages carrières.
+    """
+    from . import careers, contracts, lba
     val = profile.get("sources")
     if isinstance(val, str):
         val = [x.strip() for x in val.split(",")]
-    val = val or DEFAULT_SOURCES
+    val = list(val or DEFAULT_SOURCES)
+    if "alternance" in contracts.profile_targets(profile) and lba.enabled():
+        val.append("labonnealternance")
+    if careers.career_pages_for(profile):
+        val.append("career_pages")
     out = []
     for name in val:
         name = str(name).strip().lower()
@@ -171,6 +182,8 @@ CONNECTORS = {
     "wttj": websearch.wttj,
     "apec": websearch.apec,
     "hellowork": websearch.hellowork,
+    "labonnealternance": lba.search,
+    "career_pages": careers.search,
 }
 
 

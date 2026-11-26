@@ -22,7 +22,8 @@ from .extract import extract_structured
 from .llm import get_provider, DeterministicProvider, effective_provider
 
 FIELDS = ('jobs', 'adjacent_jobs', 'metiers_vises', 'locations', 'remote',
-          'contracts', 'sectors', 'exclusions', 'skills', 'sources', 'seniorite')
+          'contracts', 'sectors', 'exclusions', 'skills', 'sources', 'seniorite',
+          'career_pages', 'romes')
 
 # Clés qui prouvent qu'un modèle a renvoyé la fiche complète (et non un patch).
 CORE_KEYS = ('jobs', 'main_job', 'skills', 'skill_matrix', 'profile_summary')
