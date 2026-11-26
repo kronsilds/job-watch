@@ -580,15 +580,26 @@ from .tracking import status_history, history_index
 def _job_map(d):
  return {j.id: j for j in d.query(Job).all()}
 
+def _owner_view(d, a, j, rating=None, profiles=None):
+ """Évaluation de l'annonce telle que la voit le propriétaire du dossier.
+
+ Règle unique pour le dossier et le Kanban : sans elle, le mode mono-utilisateur
+ (aucun compte connecté) affichait au Kanban la note restée sur l'annonce
+ partagée — celle d'un autre compte — et au dossier celle du propriétaire.
+ ``profiles`` met en cache les profils validés par compte ; ``None`` pour un
+ dossier sans propriétaire (données historiques : l'annonce porte la note).
+ """
+ if j is None or a.user_id is None:return None
+ cache=profiles if profiles is not None else {}
+ if a.user_id not in cache:
+  owner=d.query(Profile).filter_by(user_id=a.user_id,status='validated').first()
+  cache[a.user_id]=owner.data if owner else None
+ return _job_view(d,a.user_id,j,rating,cache[a.user_id])
 def _application_payload(d, a, jobs=None, histories=None, uid=None):
  """Dossier complet + chronologie datée (création, statuts, relances, envois)."""
  j=(jobs or {}).get(a.job_id) if jobs is not None else d.get(Job, a.job_id)
  hist=(histories or {}).get(a.id) if histories is not None else status_history(d, a.id, uid)
- view=None
- if j is not None and a.user_id is not None:
-  owner=d.query(Profile).filter_by(user_id=a.user_id,status='validated').first()
-  view=_job_view(d,a.user_id,j,None,owner.data if owner else None)
- return app_payload(a, j, history=hist, job_view=view)
+ return app_payload(a, j, history=hist, job_view=_owner_view(d,a,j))
 
 def _user_applications(d, uid):
  q=d.query(Application)
@@ -806,13 +817,16 @@ def kanban(request:Request):
  d=db();u=current_user(request,d);uid=_uid(u);jobs={j.id:j for j in d.query(Job).all()};hist=history_index(d,None,uid);cards=[]
  ratings=ratings_map(d,uid)
  kprof=_profile_query(d,uid).filter_by(status='validated').first();kdata=kprof.data if kprof else None
+ profiles={uid:kdata} if uid is not None else {}
  for a in _user_applications(d,uid).order_by(Application.kanban_order,Application.id).all():
   j=jobs.get(a.job_id);history=hist.get(a.id,[])
   # Dates utiles au board : création du dossier et dernier mouvement de statut.
   created=next((h['at'] for h in history if h['kind']=='application_created'),None)
   moved=next((h['at'] for h in reversed(history) if h['kind'] in ('status_changed','state_change','email_sent')),None)
   r=ratings.get(a.job_id) if j else None
-  score=overlay_job(j,r,uid,kdata)[0] if j else None
+  # Même évaluation que le dossier : celle du propriétaire (voir _owner_view).
+  view=_owner_view(d,a,j,r if a.user_id==uid else None,profiles) if j else None
+  score=(view if view is not None else overlay_job(j,r,uid,kdata))[0] if j else None
   cards.append({'id':a.id,'job_id':a.job_id,'state':a.state,'status':a.status,'followup_state':a.followup_state,'followup_due_at':a.followup_due_at.isoformat() if a.followup_due_at else None,'submitted_at':a.submitted_at.isoformat() if a.submitted_at else None,'job_title':j.title if j else '','company':j.company if j else '','location':j.location if j else '','contract':j.contract if j else '','score':score,'email_subject':a.email_subject or '','pitch':a.pitch or '','job_created_at':j.created_at.isoformat() if j and j.created_at else None,'application_created_at':created,'status_updated_at':moved})
  return {'columns':KANBAN_COLUMNS,'cards':cards}
 @app.get('/api/report')

@@ -122,6 +122,32 @@ def test_deterministic_contract_check_overrides_a_wrong_jev_verdict():
     assert e2["gates"]["contrat"] is False and s2 <= 3.9
 
 
+def test_kanban_and_dossier_show_the_same_owner_score(tmp_path, monkeypatch):
+    """Le Kanban et le dossier affichent la note du propriétaire du dossier, y compris
+    en mode mono-utilisateur où l'annonce partagée porte encore la note d'un autre."""
+    from app.models import Application
+    c, sl = _setup(tmp_path, monkeypatch)
+    uid_a, ha = _user(c, "alice")
+    d = _seed(sl, uid_a, uid_a + 1000)
+    score_all(d, CDI_PROFILE, uid_a)
+    job = d.query(Job).one()
+    owner_score = d.query(JobRating).filter_by(user_id=uid_a).one().score
+    job.score = 1.5  # note héritée sur l'annonce partagée (calculée pour un autre profil)
+    d.add(Application(user_id=uid_a, job_id=job.id, profile_id=0))
+    d.commit()
+    app_id = d.query(Application).one().id
+    assert owner_score != 1.5
+
+    def scores(headers=None):
+        card = c.get("/api/kanban", headers=headers).json()["cards"][0]
+        dossier = c.get(f"/api/applications/{app_id}", headers=headers).json()
+        return card["score"], dossier["job"]["score"]
+
+    assert scores(ha) == (owner_score, owner_score)
+    monkeypatch.setenv("JOBWATCH_SINGLE_USER", "1")
+    assert scores() == (owner_score, owner_score)
+
+
 def test_dossier_shows_the_owner_evaluation(tmp_path, monkeypatch):
     from app.applications import job_payload
     c, sl = _setup(tmp_path, monkeypatch)
