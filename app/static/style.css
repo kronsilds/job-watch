@@ -117,7 +117,13 @@ select.select{
 select.select:focus{outline:none;box-shadow:var(--focus);border-color:var(--acid-deep)}
 
 /* --------------------------------------------------------------- layout */
-main,.auth-gate{max-width:1240px;margin:0 auto;padding:var(--s5) var(--gutter) var(--s7)}
+.auth-gate{max-width:1240px;margin:0 auto;padding:var(--s5) var(--gutter) var(--s7)}
+/* Le contenu garde une largeur fixe centrée (alignée sur l'en-tête), sauf le tableau
+   du Suivi qui occupe toute la largeur de l'écran : main n'a donc pas de largeur
+   maximale, ce sont ses blocs qui en ont une. */
+main{--content:calc(1240px - 2 * var(--gutter));padding:var(--s5) var(--gutter) var(--s7)}
+main>*,#tracking>*{max-width:var(--content);margin-left:auto;margin-right:auto}
+main>#tracking,#tracking>#kanbanBoard{max-width:none}
 
 /* Messages : toast flottant en haut de l'écran (ne décale plus la page). */
 .notice{
