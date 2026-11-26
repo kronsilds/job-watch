@@ -163,6 +163,10 @@ def normalize(data: dict) -> dict:
     base['salary_min'] = _salary(data.get('salary_min'))
     base['salary_max'] = _salary(data.get('salary_max'))
     base['ponderation'] = dict(data.get('ponderation') or {})
+    # Âge maximum d'une annonce présentée (app/freshness.py) ; absent = défaut.
+    age = data.get('max_age_days')
+    if isinstance(age, (int, float)) and not isinstance(age, bool) and 1 <= age <= 365:
+        base['max_age_days'] = int(age)
     matrix = []
     seen_rows = set()
     for row in data.get('skill_matrix') or []:

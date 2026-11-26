@@ -248,6 +248,9 @@ main{max-width:1240px;margin:0 auto;padding:var(--s5) var(--gutter) var(--s7)}
 }
 .badge.ready,.decision.retained{background:var(--acid);border-color:var(--acid-deep);color:var(--ink)}
 .decision.ignored{opacity:.5}
+.badge.stale{background:var(--danger-soft);border-color:var(--danger);color:#522017}
+.old-filter .check{display:flex;align-items:center;gap:6px;font-size:13px;text-transform:none;letter-spacing:0;color:var(--ink);min-height:36px}
+.job-meta dd a{color:inherit;text-decoration:underline;text-underline-offset:2px}
 /* Statuts Kanban */
 .badge.status-draft{background:#eeeee4}
 .badge.status-submitted{background:#e7ead6;border-color:var(--acid-deep)}

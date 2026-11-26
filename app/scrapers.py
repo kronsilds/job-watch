@@ -103,6 +103,12 @@ def normalize(item: dict, source: str) -> dict:
         sectors = [sectors]
     salary_min = item.get("salary_min") or item.get("salaire_min")
     salary_max = item.get("salary_max") or item.get("salaire_max")
+    # Dates de l'offre telles que la source les donne (ISO ou relatives) ;
+    # interprétées à l'import par app.freshness.parse_date.
+    published = (item.get("published_at") or item.get("datePosted")
+                 or item.get("dateCreation") or item.get("created")
+                 or item.get("datePublication") or "")
+    expires = item.get("expires_at") or item.get("validThrough") or ""
     return {
         "external_id": external_id,
         "_source": source,
@@ -117,6 +123,8 @@ def normalize(item: dict, source: str) -> dict:
         "skills": skills,
         "url": item.get("redirect_url") or item.get("url") or "",
         "description": item.get("description") or item.get("description_entreprise") or "",
+        "published_at": str(published or ""),
+        "expires_at": str(expires or ""),
     }
 def france_travail(profile: dict) -> list[dict]:
     """France Travail : API officielle si FRANCE_TRAVAIL_TOKEN, sinon page de recherche."""

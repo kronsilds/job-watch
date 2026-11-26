@@ -95,7 +95,13 @@ def user_agent() -> str:
 
 def cache_dir() -> Path:
     p = Path(_env("JOBWATCH_WEB_CACHE_DIR", str(BASE_DIR / "data" / "webcache")))
-    p.mkdir(parents=True, exist_ok=True)
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # Système de fichiers en lecture seule (Vercel) : seul /tmp est inscriptible.
+        import tempfile
+        p = Path(tempfile.gettempdir()) / "jobwatch-webcache"
+        p.mkdir(parents=True, exist_ok=True)
     return p
 
 
@@ -144,6 +150,14 @@ def _cache_get(key: str, ttl: int) -> str | None:
     except (OSError, ValueError):
         return None
     return None
+
+
+def _cache_url(key: str) -> str:
+    """URL finale (après redirections) mémorisée avec une page en cache."""
+    try:
+        return str(json.loads(_cache_paths(key)[1].read_text(encoding="utf-8")).get("url") or "")
+    except (OSError, ValueError):
+        return ""
 
 
 def _cache_set(key: str, text: str, final_url: str, status: int) -> None:
@@ -257,6 +271,20 @@ def _robots_gate(url: str) -> None:
 def fetch_page(url: str, *, method: str = "GET", json_body: dict | None = None,
                ttl: int | None = None, headers: dict | None = None) -> str:
     """Récupère une page (HTML/JSON/XML) en respectant la charte fair use."""
+    return _fetch(url, method=method, json_body=json_body, ttl=ttl, headers=headers)[0]
+
+
+def fetch_page_info(url: str, *, ttl: int | None = None) -> tuple[str, str]:
+    """Comme :func:`fetch_page` (GET), en renvoyant aussi l'URL finale.
+
+    Sert à la vérification des annonces : une offre terminée redirige souvent
+    vers une page de recherche.
+    """
+    return _fetch(url, ttl=ttl)
+
+
+def _fetch(url: str, *, method: str = "GET", json_body: dict | None = None,
+           ttl: int | None = None, headers: dict | None = None) -> tuple[str, str]:
     if ttl is None:
         ttl = _env_int("JOBWATCH_WEB_CACHE_TTL", 21600)
     payload = json.dumps(json_body, sort_keys=True) if json_body else ""
@@ -264,7 +292,7 @@ def fetch_page(url: str, *, method: str = "GET", json_body: dict | None = None,
     if method == "GET":
         cached = _cache_get(key, ttl)
         if cached is not None:
-            return cached
+            return cached, _cache_url(key) or url
     _robots_gate(url)
     _consume_budget()
     _polite_sleep()
@@ -285,7 +313,7 @@ def fetch_page(url: str, *, method: str = "GET", json_body: dict | None = None,
     text = content.decode(r.encoding or "utf-8", errors="replace")
     if method == "GET":
         _cache_set(key, text, str(r.url), r.status_code)
-    return text
+    return text, str(r.url)
 
 
 def _require_bs4() -> None:
@@ -548,9 +576,20 @@ def build_search_requests(profile: dict, sources: list[str] | None = None,
         "adzuna": lambda q, z: adzuna_search_url(profile, q, z["label"]),
         "indeed": lambda q, z: indeed_search_url(profile, q, z["label"]),
     }
+    # Profil stage/alternance : le type de contrat est ajouté aux mots-clés
+    # (« data analyst alternance ») pour que les sites renvoient d'abord des
+    # offres compatibles plutôt que des CDI expérimentés.
+    from .contracts import fold, search_suffixes
+    suffixes = search_suffixes(profile)
+    queries: list[str] = []
+    for metier in metiers:
+        for suffix in suffixes:
+            q = metier if not suffix or suffix in fold(metier) else f"{metier} {suffix}"
+            if q not in queries:
+                queries.append(q)
     out: list[dict] = []
     seen: set[str] = set()
-    for metier in metiers:
+    for metier in queries:
         for zone in zones:
             for source in known:
                 if source == "france_travail" and zone.get("ft") is None:
@@ -590,6 +629,17 @@ def _first_group(pattern: str, text: str, flags: int = re.I | re.S) -> str:
     return m.group(1) if m else ""
 
 
+def _card_published(text: str, require_hint: bool = True) -> str:
+    """Date de publication (ISO) lue dans le texte d'une carte, '' sinon.
+
+    ``require_hint`` exige « Publié… / Posted… » devant la date (Indeed affiche
+    aussi « Employeur actif il y a 3 jours », qui n'est pas une publication).
+    """
+    from .freshness import find_published
+    found = find_published(text, require_hint=require_hint)
+    return found.date().isoformat() if found else ""
+
+
 def parse_linkedin(html: str, base: str = "https://www.linkedin.com") -> list[dict]:
     """Cartes SSR de la page de recherche invités LinkedIn.
 
@@ -605,12 +655,14 @@ def parse_linkedin(html: str, base: str = "https://www.linkedin.com") -> list[di
         if not link or not title:
             continue
         href = link.get("href", "").split("?")[0]  # retire les params de tracking
+        when = card.select_one("time[datetime]")
         out.append({
             "title": title,
             "company": _text(card.select_one("h4.base-search-card__subtitle")) or "Inconnue",
             "location": _text(card.select_one("span.job-search-card__location")),
             "url": href if href.startswith("http") else urljoin(base, href),
             "description": "",
+            "published_at": (when.get("datetime") or "") if when else "",
         })
     if out:
         return out
@@ -641,6 +693,7 @@ def _parse_linkedin_loose(html: str, base: str) -> list[dict]:
                 r"job-search-card__location[^>]*>([\s\S]*?)</span>", chunk)),
             "url": href.split("?")[0],
             "description": "",
+            "published_at": _first_group(r'<time[^>]*datetime="([^"]+)"', chunk),
         })
     return out
 
@@ -671,6 +724,7 @@ def parse_indeed(html: str, base: str = "https://fr.indeed.com") -> list[dict]:
                          or _text(card.select_one("div.companyLocation"))),
             "url": href if href.startswith("http") else urljoin(base, href),
             "description": "",
+            "published_at": _card_published(_text(card)),
         })
     if out:
         return out
@@ -722,6 +776,7 @@ def parse_hellowork(html: str, base: str = "https://www.hellowork.com") -> list[
             "contract": _text(card.select_one('[data-cy="contractCard"]')),
             "url": href if href.startswith("http") else urljoin(base, href),
             "description": "",
+            "published_at": _card_published(_text(card), require_hint=False),
         })
     if out:
         return out
@@ -787,6 +842,7 @@ def parse_adzuna_html(html: str) -> list[dict]:
             "location": _text(loc_el) if loc_el else "",
             "url": href if href.startswith("http") else urljoin("https://www.adzuna.fr", href),
             "description": _text(desc_el) if desc_el else "",
+            "published_at": _card_published(_text(card), require_hint=False),
         })
     if out:
         return out
@@ -836,6 +892,7 @@ def parse_francetravail_html(html: str,
             company = _text(subtext).removesuffix("-").strip(" -")
         contrat_el = card.select_one("div.media-right p.contrat") or card.select_one("p.contrat")
         desc_el = card.select_one("p.description")
+        date_el = card.select_one("p.date")
         href = link.get("href", "") if link else ""
         out.append({
             "title": _text(titre_el),
@@ -844,6 +901,8 @@ def parse_francetravail_html(html: str,
             "contract": _text(contrat_el) if contrat_el else "",
             "url": href if href.startswith("http") else urljoin(base, href),
             "description": _text(desc_el) if desc_el else "",
+            "published_at": (_card_published(_text(date_el), require_hint=False)
+                             if date_el else ""),
         })
     if out:
         return out
@@ -893,6 +952,8 @@ def _parse_francetravail_loose(html: str, base: str) -> list[dict]:
                 r"href=\"([^\"]*/offres/recherche/detail/[^\"]*)\"", chunk),
             "description": _html_to_text(_first_group(
                 r"description[^>]*>([\s\S]*?)</p>", chunk)),
+            "published_at": _card_published(_html_to_text(_first_group(
+                r'class="date"[^>]*>([\s\S]*?)</p>', chunk)), require_hint=False),
         })
     return out
 
@@ -941,6 +1002,8 @@ def parse_structured(html: str) -> list[dict]:
                 "contract": str(value.get("employmentType") or ""),
                 "url": url,
                 "description": _html_to_text(value.get("description") or ""),
+                "published_at": str(value.get("datePosted") or ""),
+                "expires_at": str(value.get("validThrough") or ""),
             })
     return out
 
@@ -995,21 +1058,13 @@ def normalize_offer_url(url: str, source: str) -> str:
 
 
 def detect_contract(text: str) -> str:
-    """Contrat deviné depuis le texte (titre + description + lieu, n8n)."""
-    low = str(text or "").lower()
-    if re.search(r"altern|apprentiss", low):
-        return "alternance"
-    if re.search(r"stage|intern", low):
-        return "stage"
-    if re.search(r"freelance|ind[eé]pendant|portage", low):
-        return "freelance"
-    if re.search(r"int[eé]rim", low):
-        return "interim"
-    if re.search(r"\bcdd\b", low):
-        return "cdd"
-    if re.search(r"\bcdi\b", low):
-        return "cdi"
-    return ""
+    """Contrat deviné depuis le texte (titre + description + lieu).
+
+    Délègue à :func:`app.contracts.qualify_contract` (taxonomie canonique,
+    mots entiers : « international » n'est plus pris pour un stage).
+    """
+    from .contracts import qualify_contract
+    return ", ".join(qualify_contract(text, text, ""))
 
 
 def detect_remote(text: str) -> str:
@@ -1079,6 +1134,7 @@ def parse_apec_json(payload: dict) -> list[dict]:
             "salary_max": salary_max,
             "url": APEC_DETAIL_URL.format(numero),
             "description": item.get("texteOffre") or "",
+            "published_at": str(item.get("datePublication") or ""),
         })
     return out
 
@@ -1117,6 +1173,18 @@ def parse_wttj_sitemap_url(url: str) -> dict | None:
         "url": m.group(0),
         "description": "",
     }
+
+
+def parse_sitemap_entries(xml_text: str) -> list[tuple[str, str]]:
+    """Couples ``(loc, lastmod)`` d'un sitemap (lastmod = '' si absent)."""
+    out = []
+    for block in re.findall(r"<url>([\s\S]*?)</url>", xml_text or ""):
+        loc = _first_group(r"<loc>\s*([^<\s]+)\s*</loc>", block)
+        if loc:
+            out.append((loc, _first_group(r"<lastmod>\s*([^<\s]+)\s*</lastmod>", block)))
+    if not out:  # sitemap sans blocs <url> : liste brute de <loc>
+        out = [(loc, "") for loc in re.findall(r"<loc>([^<]+)</loc>", xml_text or "")]
+    return out
 
 
 def wttj_keyword_filter(items: list[dict], metiers: list[str]) -> list[dict]:
@@ -1373,9 +1441,12 @@ def wttj(profile: dict) -> list[dict]:
     items: list[dict] = []
     for shard in shards[:max_shards]:
         xml_text = fetch_page(shard, ttl=ttl_sitemap)
-        for loc in re.findall(r"<loc>([^<]+)</loc>", xml_text):
+        for loc, lastmod in parse_sitemap_entries(xml_text):
             item = parse_wttj_sitemap_url(loc)
             if item:
+                # <lastmod> : dernière mise à jour déclarée, faute de date de
+                # publication dans le sitemap (sert au filtre de fraîcheur).
+                item["published_at"] = lastmod
                 items.append(item)
     items = wttj_keyword_filter(items, metiers_for(profile))
     return _normalize_all(items, "wttj")

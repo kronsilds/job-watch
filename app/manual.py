@@ -340,6 +340,9 @@ def _job_posting_offer(node: dict, page_url: str = "") -> dict:
         "salary_max": salary_max,
         "url": str(node.get("url") or "").strip() or page_url,
         "description": _html_to_text(str(node.get("description") or "")),
+        # Fraîcheur : date de publication et date limite déclarées (ISO).
+        "published_at": str(node.get("datePosted") or "").strip(),
+        "expires_at": str(node.get("validThrough") or "").strip(),
     }
 
 
@@ -467,6 +470,7 @@ def store_offer(db, offer: dict, meta: dict,
     from .applications import job_payload
     from .models import Event, Job
     from .scoring import score_all
+    from .dedup import job_for_external_id
     from .sources import prescore_and_select, upsert_jobs
     from .user_jobs import overlay_job
     title = str(offer.get("title") or "").strip()
@@ -483,11 +487,15 @@ def store_offer(db, offer: dict, meta: dict,
     if profile_data:
         _selected, prescored = prescore_and_select([offer], profile_data, top_n=1)
         prescore = prescored[0].get("_prescore") if prescored else None
-    created = db.query(Job).filter_by(external_id=external_id).first() is None
+    created = job_for_external_id(db, external_id) is None
     # upsert_jobs déroule la passe 1 (pré-note) puis la passe 2 ciblée
-    # (complétion heuristique + LLM light des champs manquants).
-    upsert_jobs(db, [offer], profile_data=profile_data, top_n=1)
-    job = db.query(Job).filter_by(external_id=external_id).first()
+    # (complétion heuristique + LLM light des champs manquants) ; une annonce
+    # déjà connue via un autre site y est rattachée (app/dedup.py).
+    stats: dict = {}
+    upsert_jobs(db, [offer], profile_data=profile_data, top_n=1, stats=stats)
+    job = job_for_external_id(db, external_id)
+    if stats.get("merged"):
+        created = False
     if job is None:
         raise ValueError("Import impossible : l'annonce n'a pas pu être enregistrée.")
     if profile_data:

@@ -36,18 +36,28 @@ def _ensure_user_columns():
     for s in stmts:conn.execute(text(s))
 def _add_missing_columns():
  """Ajoute les colonnes apparues après coup : ``create_all`` ne modifie pas une
- table existante. SQLite uniquement (le schéma est recréé sur une base neuve)."""
- if not _IS_SQLITE:return
+ table existante. Fonctionne sur SQLite et sur Postgres (Neon) : le type SQL
+ est compilé depuis le modèle pour le dialecte courant ; l'ajout de colonnes
+ nullables est non destructif."""
  from sqlalchemy import inspect,text
+ from . import models as _models
  insp=inspect(engine)
- if "jobs" not in insp.get_table_names():return
+ tables=set(insp.get_table_names())
+ if "jobs" not in tables:return
  cols={c["name"] for c in insp.get_columns("jobs")}
- if "created_at" in cols:return
+ had_created_at="created_at" in cols
+ stmts=[]
+ for col in _models.Job.__table__.columns:
+  if col.name in cols:continue
+  stmts.append(f"ALTER TABLE jobs ADD COLUMN {col.name} {col.type.compile(dialect=engine.dialect)}")
+ if not stmts:return
  with engine.begin() as conn:
-  conn.execute(text("ALTER TABLE jobs ADD COLUMN created_at DATETIME"))
-  # Date d'ajout approximée par la 1re campagne importée, sinon l'instant de migration.
-  conn.execute(text("UPDATE jobs SET created_at=(SELECT MIN(created_at) FROM events WHERE kind='campaign') WHERE created_at IS NULL"))
-  conn.execute(text("UPDATE jobs SET created_at=COALESCE(created_at,CURRENT_TIMESTAMP) WHERE created_at IS NULL"))
+  for s in stmts:conn.execute(text(s))
+  if not had_created_at:
+   # Date d'ajout approximée par la 1re campagne importée, sinon l'instant de migration.
+   conn.execute(text("UPDATE jobs SET created_at=(SELECT MIN(created_at) FROM events WHERE kind='campaign') WHERE created_at IS NULL"))
+   conn.execute(text("UPDATE jobs SET created_at=COALESCE(created_at,CURRENT_TIMESTAMP) WHERE created_at IS NULL"))
+  conn.execute(text("UPDATE jobs SET availability='active' WHERE availability IS NULL"))
 def init_db():
  from . import models
  Base.metadata.create_all(engine)

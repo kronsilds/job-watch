@@ -21,12 +21,13 @@ import os
 import re
 import unicodedata
 
-from .heuristics import detect_contracts, detect_remote
+from .contracts import qualify_contract
+from .heuristics import detect_remote
 from .llm import get_provider, DeterministicProvider
 from .prompts import load_keywords
 
 # Modalités de temps de travail présentes dans le lexique « contrats » : ce ne
-# sont pas des types de contrat — on les écarte de la complétion de contrat.
+# sont pas des types de contrat (utilisé par app/manual.py pour employmentType).
 _TIME_MODALITIES = {"temps plein", "plein temps", "temps partiel", "part-time"}
 
 _FILLABLE_TEXT = ("title", "company", "location", "remote", "contract")
@@ -146,10 +147,12 @@ def heuristic_completion(offer: dict) -> dict:
         return offer
     extra: dict = {}
     if not str(offer.get("contract") or "").strip():
-        contracts = [c for c in detect_contracts(text)
-                     if c.lower() not in _TIME_MODALITIES]
-        if contracts:
-            extra["contract"] = contracts[0].lower()
+        # Taxonomie canonique (app/contracts.py) : l'intitulé compte
+        # (« Alternance - … »), la description exige une tournure de contrat
+        # (« vous encadrerez des alternants » ne fait pas une alternance).
+        types = qualify_contract(offer.get("title"), offer.get("description"), "")
+        if types:
+            extra["contract"] = ", ".join(types)
     if not str(offer.get("remote") or "").strip():
         remote = detect_remote(text)
         if remote:

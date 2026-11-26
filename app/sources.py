@@ -65,7 +65,64 @@ def prescore_and_select(records, profile_data=None, top_n: int | None = None):
    r["_selected"] = True
    selected.append(r)
  return selected, cheap
-def upsert_jobs(db,records,provider=None,profile_data=None,top_n: int | None = None, llm_budget: int | None = None):
+_TEXT_FIELDS = ("title", "company", "location", "remote", "contract", "url", "description")
+
+
+def _record_dates(r: dict, now):
+ """Dates portées par un enregistrement (ISO, relatives…) → datetimes UTC."""
+ from .freshness import parse_date
+ pub = parse_date(r.get("published_at") or r.get("datePosted") or r.get("date_posted"), now)
+ exp = parse_date(r.get("expires_at") or r.get("validThrough"), now)
+ if pub and pub > now:
+  pub = now  # date future = erreur de source : bornée à aujourd'hui
+ return pub, exp
+
+
+def _overwrite(j, r: dict) -> None:
+ """Même diffusion ré-importée : ses champs remplacent ceux de l'offre."""
+ for k in _TEXT_FIELDS:
+  setattr(j, k, str(r.get(k) or ""))
+ for k in ["salary_min", "salary_max"]:
+  setattr(j, k, int(r[k]) if r.get(k) not in (None, "") else None)
+ for k in ["sectors", "skills"]:
+  v = r.get(k, [])
+  setattr(j, k, v if isinstance(v, list) else [x.strip() for x in str(v).split(",") if x.strip()])
+
+
+def _fill(j, r: dict) -> None:
+ """Autre site pour la même offre : on ne fait que compléter (jamais écraser)."""
+ for k in _TEXT_FIELDS:
+  val = str(r.get(k) or "").strip()
+  if not val:
+   continue
+  cur = str(getattr(j, k) or "").strip()
+  if not cur or cur in ("Inconnue", "Sans titre") or (k == "description" and len(val) > len(cur)):
+   setattr(j, k, val)
+ for k in ["salary_min", "salary_max"]:
+  if getattr(j, k) is None and r.get(k) not in (None, ""):
+   setattr(j, k, int(r[k]))
+ for k in ["sectors", "skills"]:
+  v = r.get(k, [])
+  v = v if isinstance(v, list) else [x.strip() for x in str(v).split(",") if x.strip()]
+  merged = list(getattr(j, k) or [])
+  for x in v:
+   if x not in merged:
+    merged.append(x)
+  setattr(j, k, merged)
+
+
+def upsert_jobs(db,records,provider=None,profile_data=None,top_n: int | None = None, llm_budget: int | None = None, stats: dict | None = None):
+ """Enregistre les annonces : pré-note, complétion ciblée, rapprochement inter-sites.
+
+ Une annonce déjà vue sur un autre site (même entreprise, intitulé proche,
+ ville compatible : :mod:`app.dedup`) est rattachée à l'offre existante au
+ lieu d'en créer une nouvelle ; chaque diffusion est tracée dans
+ ``job_sources``. Les dates (publication, limite, dernière apparition) sont
+ mises à jour à chaque passage. Retourne le nombre d'offres **nouvelles** ;
+ ``stats`` (facultatif) reçoit ``{"created", "merged", "updated"}``.
+ """
+ from .dedup import JobIndex
+ from .freshness import aware, utcnow
  from .models import Job
  # Passe 1 (gratuite, sur toutes les annonces) : lexique + heuristique + pré-note.
  # Passe 2 (coûteuse/LLM) : uniquement le top-N pré-noté de chaque site.
@@ -76,24 +133,56 @@ def upsert_jobs(db,records,provider=None,profile_data=None,top_n: int | None = N
  enriched = enrich_offers(list(selected), provider=provider, llm_budget=llm_budget)
  enriched_by_id = {id(r): e for r, e in zip(selected, enriched)}
  final = [(enriched_by_id.get(id(r), r) if id(r) in selected_ids else r) for r in prescored]
- n=0
+ index = JobIndex(db)
+ now = utcnow()
+ counts = {"created": 0, "merged": 0, "updated": 0}
  for r in final:
   r = dict(r)
   prescore = r.pop("_prescore", None)
   source = r.pop("_source", None); r.pop("_selected", None)
-  eid=str(r.get("external_id") or r.get("id") or f"manual-{r.get('title','')}-{r.get('company','')}"); j=db.query(Job).filter_by(external_id=eid).first()
-  if not j:j=Job(external_id=eid);db.add(j);n+=1
-  for k in ["title","company","location","remote","contract","url","description"]:setattr(j,k,str(r.get(k) or ""))
-  for k in ["salary_min","salary_max"]:setattr(j,k,int(r[k]) if r.get(k) not in (None,"") else None)
-  for k in ["sectors","skills"]:
-   v=r.get(k,[]);setattr(j,k,v if isinstance(v,list) else [x.strip() for x in str(v).split(",") if x.strip()])
+  eid=str(r.get("external_id") or r.get("id") or f"manual-{r.get('title','')}-{r.get('company','')}")
+  j = index.by_external_id(eid)
+  is_new = False
+  if j is not None:
+   # Diffusion déjà connue : si l'offre en regroupe plusieurs, on complète
+   # seulement (ne pas perdre la description plus riche d'un autre site).
+   if j.external_id == eid and not index.has_other_sources(j, eid):
+    _overwrite(j, r)
+   else:
+    _fill(j, r)
+   counts["updated"] += 1
+  else:
+   j = index.find_duplicate(r, source=source or "")
+   if j is not None:
+    _fill(j, r)
+    counts["merged"] += 1
+   else:
+    j = Job(external_id=eid); db.add(j)
+    _overwrite(j, r)
+    counts["created"] += 1; is_new = True
+  pub, exp = _record_dates(r, now)
+  if pub and (aware(j.published_at) is None or pub > aware(j.published_at)):
+   j.published_at = pub
+  if exp and (aware(j.expires_at) is None or exp > aware(j.expires_at)):
+   j.expires_at = exp
+  j.last_seen_at = now
+  if j.availability is None or (j.availability == "expired" and (exp is None or exp > now)):
+   # Revue dans une recherche : de nouveau en ligne.
+   j.availability = "active"; j.availability_note = ""
   # Provenance (affichée dans l'UI) et pré-note : conservées dans `explanation`
   # car ce sont les seules informations que `Job` ne porte pas ailleurs.
   try:
    expl = dict(j.explanation or {})
-   if source: expl["source"] = str(source)
+   if source and not expl.get("source"): expl["source"] = str(source)
    if prescore is not None: expl["prescore"] = float(prescore)
    if expl: j.explanation = expl
   except Exception:
    pass
- db.commit();return n
+  db.flush()
+  if is_new:
+   index.add(j)
+  index.attach(j, source or "", eid, str(r.get("url") or ""), pub, now)
+ db.commit()
+ if stats is not None:
+  stats.update(counts)
+ return counts["created"]

@@ -92,11 +92,18 @@ offres.
 
 ### 3. Lancez une veille et parcourez les offres
 
-Onglet **Marché & offres** : choisissez la source (**Demo** pour essayer sans
-rien configurer, **Web** pour la veille réelle) et cliquez sur **Lancer une
-campagne**. Les offres apparaissent avec leur note ; vous pouvez filtrer,
+Onglet **Marché & offres** : cliquez sur **Lancer une campagne** (veille Web
+via les connecteurs du profil). Les offres apparaissent avec leur note ; vous pouvez filtrer,
 trier, et retenir ou ignorer chaque offre. Une annonce trouvée ailleurs
 s'ajoute en collant son lien en haut de page.
+
+Les annonces anciennes (45 jours par défaut, réglable dans le profil) ou
+terminées sont masquées ; la case **Anciennes · Afficher** les fait
+réapparaître, et le bouton **Vérifier** contrôle qu'une annonce est toujours en
+ligne. Une offre diffusée sur plusieurs sites n'apparaît qu'une fois (« Vue
+sur : HelloWork · France Travail »). Si vous cherchez un stage ou une
+alternance, les offres qui exigent plusieurs années d'expérience sont
+signalées incompatibles.
 
 ![Onglet Marché et offres : offres notées](docs/screenshots/03-offres.png)
 
@@ -141,6 +148,8 @@ commitez jamais.
 | Veille Adzuna (API publique) | `ADZUNA_APP_ID`, `ADZUNA_APP_KEY` |
 | Se passer de compte (usage solo) | `JOBWATCH_SINGLE_USER=1` |
 | Changer d'adresse / de port | `JOBWATCH_HOST`, `JOBWATCH_PORT` |
+| Âge maximum par défaut des annonces | `JOBWATCH_MAX_AGE_DAYS=45` |
+| Annonces vérifiées en fin de campagne | `JOBWATCH_LIVENESS_MAX=3` (0 = jamais) |
 
 Sans clé de veille, la source Web utilise les pages publiques des sites, dans
 la limite d'un quota quotidien volontairement bas (usage personnel, « fair
@@ -154,7 +163,7 @@ le rapport, sans bloquer les autres.
 | `py -3.14` introuvable (Windows) | Installez Python 3.14 ou changez la version dans `install.ps1`. |
 | L'écran de connexion gêne en usage solo | `JOBWATCH_SINGLE_USER=1` dans `.env` désactive les comptes. |
 | « Validez le profil avant de lancer une campagne » | Onglet Profil → **Valider le profil**. |
-| Aucune offre en source Web | Vérifiez le profil (métier, zone) et les diagnostics du rapport de campagne ; essayez d'abord la source **Demo**. |
+| Aucune offre en source Web | Vérifiez le profil (métier, zone) et les diagnostics du rapport de campagne. |
 | Le port 8000 est déjà utilisé | Définissez `JOBWATCH_PORT=8001` puis relancez. |
 | Créer un compte sans interface | `python -m app.cli user-create --user camille --password ...` |
 

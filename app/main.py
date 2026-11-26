@@ -16,6 +16,9 @@ from .sources import read_records,upsert_jobs
 from .scrapers import sources_for, fetch_one, enrich_skills_from_text, MATRIX_CONNECTORS
 from .progress import sse,P
 from .scoring import score_all
+from .dedup import sources_map, merge_duplicates
+from .freshness import freshness, max_age_days, check_offer, apply_check, needs_check, iso as _iso
+from . import contracts as _contracts
 from .market import analyze,summarize,analyze_market as market_analyzer
 from .config import DEMO_PATH
 from fastapi.openapi.utils import get_openapi
@@ -296,6 +299,43 @@ def _fetch_with_progress(profile_data,source,wanted,with_enrich):
   yield P.progress('enrich','Enrichissement des compétences depuis les descriptions…')
   records=[enrich_skills_from_text(r) for r in records]
  return records,report
+def _dedupe_steps(d,stats):
+ """Rapprochement inter-sites : annonces rattachées à l'import + doublons en base."""
+ if stats.get('merged'):
+  yield P.progress('dedupe_sites',f"{stats['merged']} annonce(s) déjà connue(s) via un autre site : rattachée(s) à l'offre existante.",merged=stats['merged'])
+ try:
+  fused=merge_duplicates(d)
+ except Exception as exc:  # le rapprochement ne doit jamais casser la veille
+  d.rollback();yield P.progress('warning',f'Rapprochement des doublons ignoré : {exc}');return 0
+ if fused:
+  yield P.progress('dedupe_sites',f'{fused} doublon(s) inter-sites fusionné(s) en base.',merged=fused)
+ return fused
+def _liveness_steps(d,profile_data,uid):
+ """Vérifie que les meilleures offres sont toujours en ligne (quota partagé).
+
+ Seules les offres présentées (fraîches) et prometteuses (note ≥ 7 ou
+ retenues), non vérifiées depuis quelques jours, sont contrôlées ; au plus
+ ``JOBWATCH_LIVENESS_MAX`` pages (défaut 3) pour ménager le quota quotidien.
+ """
+ import os as _os
+ try:limit=max(0,int(_os.getenv('JOBWATCH_LIVENESS_MAX','3') or 3))
+ except ValueError:limit=3
+ if not limit:return 0
+ max_age=max_age_days(profile_data);ratings=ratings_map(d,uid)
+ cands=[]
+ for j in d.query(Job).all():
+  score,_c,dec,_e=overlay_job(j,ratings.get(j.id))
+  if not j.url or not ((score or 0)>=7 or dec=='retained'):continue
+  if not freshness(j,max_age)['fresh'] or not needs_check(j):continue
+  cands.append((score or 0,j))
+ cands.sort(key=lambda t:t[0],reverse=True)
+ expired=0
+ for i,(_s,j) in enumerate(cands[:limit],1):
+  yield P.progress('liveness',f'Vérification {i}/{min(limit,len(cands))} : {j.title} ({j.company or "entreprise inconnue"}) toujours en ligne ?',url=j.url)
+  result=check_offer(j.url);apply_check(j,result);d.commit()
+  if result['status']=='expired':expired+=1;yield P.progress('liveness',f'Annonce terminée, masquée : {j.title} — {result["reason"]}.',url=j.url)
+  if result.get('budget'):yield P.progress('warning',result['reason']);break
+ return expired
 def _prescore_report(profile_data,records):
  """Pré-note gratuite (hors-ligne) pour le rapport : top-N pré-sélectionné par site."""
  try:
@@ -320,8 +360,9 @@ def _search_now_steps(source:str,enrich_skills:bool, uid=None):
    report=dict(report or {});report['prescoring']=presel
    yield P.progress('prescore',f'Pré-notation : {presel["prescored"]} offre(s) notées, top-{presel["top_n_per_source"]} par site → {presel["selected"]} enrichie(s).',prescoring=presel)
   yield P.progress('enrich_llm','Complétion des champs manquants sur le top pré-noté (heuristique + LLM light si configuré)…')
-  n=upsert_jobs(d,records,profile_data=profile_data);p=_profile_query(d,uid).filter_by(status='validated').first()
+  stats={};n=upsert_jobs(d,records,profile_data=profile_data,stats=stats);p=_profile_query(d,uid).filter_by(status='validated').first()
   yield P.progress('imported',f'{n} nouvelle(s) offre(s) importée(s) en base.')
+  yield from _dedupe_steps(d,stats)
   if p:
    yield P.progress('scoring',f'Note finale (scoring pondéré) de {d.query(Job).count()} offre(s)…')
    score_all(d,p.data,uid)
@@ -354,14 +395,18 @@ def _campaign_steps(source:str,enrich_skills:bool,analyze_market:bool, uid=None)
    report=dict(report or {});report['prescoring']=presel
    yield P.progress('prescore',f'Pré-notation : {presel["prescored"]} offre(s) notées, top-{presel["top_n_per_source"]} par site → {presel["selected"]} enrichie(s).',prescoring=presel)
   yield P.progress('enrich_llm','Complétion des champs manquants sur le top pré-noté (heuristique + LLM light si configuré)…')
-  n=upsert_jobs(d,records,profile_data=profile_data)
+  stats={};n=upsert_jobs(d,records,profile_data=profile_data,stats=stats)
+  yield P.progress('imported',f'{n} nouvelle(s) offre(s) importée(s) en base.')
+  yield from _dedupe_steps(d,stats)
  else:
   yield P.progress('file','Lecture du fichier de démonstration…' if source=='demo' else f'Lecture du fichier {source}…')
   n=upsert_jobs(d,read_records(DEMO_PATH) if source=='demo' else Path(source),profile_data=profile_data)
- yield P.progress('imported',f'{n} nouvelle(s) offre(s) importée(s) en base.')
+  yield P.progress('imported',f'{n} nouvelle(s) offre(s) importée(s) en base.')
  total=d.query(Job).count()
  yield P.progress('scoring',f'Note finale (scoring pondéré) de {total} offre(s)…')
  score_all(d,profile_data,uid)
+ if source in ('web','auto') or source in sources_for(profile_data):
+  yield from _liveness_steps(d,profile_data,uid)
  shortlisted=d.query(Job).filter(Job.score>=7,Job.decision=='new').count();retained=d.query(Job).filter_by(decision='retained').count()
  yield P.progress('market','Synthèse du marché…')
  summary=analyze(d);market_note=summarize(summary)
@@ -428,9 +473,18 @@ def import_job_url_stream(payload:OfferUrlImport, request:Request):
  def gen():yield from _import_url_steps(payload,uid)
  return _stream(_safe(gen()))
 @app.get('/api/jobs')
-def jobs(request:Request,min_score:float=0,decision:str='',application:str=''):
+def jobs(request:Request,min_score:float=0,decision:str='',application:str='',include_old:bool=False):
+ """Offres notées pour l'utilisateur courant.
+
+ Par défaut, les annonces anciennes (publiées depuis plus de
+ ``max_age_days``), terminées ou périmées sont masquées, sauf si elles sont
+ retenues ou ont un dossier ; ``include_old=true`` les renvoie toutes, avec
+ leur statut ``freshness``.
+ """
  d=db();u=current_user(request,d);uid=_uid(u)
  ratings=ratings_map(d,uid)
+ prof=_profile_query(d,uid).first();pdata=(prof.data if prof else None) or {}
+ max_age=max_age_days(pdata);srcs=sources_map(d)
  all_jobs=d.query(Job).order_by(Job.id).all()
  idx={}
  qapp=d.query(Application)
@@ -447,9 +501,23 @@ def jobs(request:Request,min_score:float=0,decision:str='',application:str=''):
   apps=idx.get(j.id,[])
   if application=='yes' and not apps: continue
   if application=='no' and apps: continue
-  out.append({'id':j.id,'title':j.title,'company':j.company,'location':j.location,'remote':j.remote,'contract':j.contract,'score':score,'confidence':confidence,'decision':dec,'skills':j.skills,'sectors':j.sectors,'salary_min':j.salary_min,'salary_max':j.salary_max,'url':j.url,'description':j.description,'explanation':expl,'created_at':j.created_at.isoformat() if j.created_at else None,'applications':apps,'has_application':bool(apps),'application_id':apps[0]['id'] if apps else None})
+  fr=freshness(j,max_age)
+  if not include_old and not fr['fresh'] and dec!='retained' and not apps: continue
+  fit=_contracts.assess(j,pdata)
+  sources=srcs.get(j.id) or ([{'source':(expl or {}).get('source') or '','url':j.url,'published_at':_iso(j.published_at),'last_seen_at':_iso(j.last_seen_at)}] if j.url else [])
+  out.append({'published_at':_iso(j.published_at),'expires_at':_iso(j.expires_at),'last_seen_at':_iso(j.last_seen_at),'availability':j.availability or 'active','availability_note':j.availability_note or '','availability_checked_at':_iso(j.availability_checked_at),'freshness':fr,'contract_types':fit['contract_types'],'contract_label':_contracts.labels(fit['contract_types']),'experience':fit['experience'],'experience_label':_contracts.experience_label(fit['experience']),'sources':sources,'id':j.id,'title':j.title,'company':j.company,'location':j.location,'remote':j.remote,'contract':j.contract,'score':score,'confidence':confidence,'decision':dec,'skills':j.skills,'sectors':j.sectors,'salary_min':j.salary_min,'salary_max':j.salary_max,'url':j.url,'description':j.description,'explanation':expl,'created_at':j.created_at.isoformat() if j.created_at else None,'applications':apps,'has_application':bool(apps),'application_id':apps[0]['id'] if apps else None})
  out.sort(key=lambda x:((x['score'] or 0),x['id']),reverse=True)
  return out
+@app.post('/api/jobs/{job_id}/check',summary="Vérifier que l'annonce est toujours en ligne")
+def check_job(job_id:int,request:Request):
+ """Une requête vers la page de l'annonce (charte fair use) : 404/410,
+ redirection vers une recherche, mention « offre n'est plus disponible » ou
+ date limite dépassée → l'offre est marquée terminée et masquée."""
+ d=db();current_user(request,d)
+ j=d.get(Job,job_id)
+ if not j:raise HTTPException(404,'Offre inconnue')
+ result=check_offer(j.url);apply_check(j,result);d.commit()
+ return {'id':j.id,'status':result['status'],'reason':result.get('reason',''),'availability':j.availability or 'active','checked_at':_iso(j.availability_checked_at)}
 @app.post('/api/jobs/{job_id}/decision')
 def decision(job_id:int,value:str,request:Request):
  d=db();u=current_user(request,d);uid=_uid(u)
@@ -737,11 +805,14 @@ def application_report(request:Request):
 
 @app.get('/api/overview')
 def overview(request:Request):
- d=db();u=current_user(request,d);uid=_uid(u);p=_profile_query(d,uid).first();jobs=d.query(Job).all();ratings=ratings_map(d,uid);apps=_user_applications(d,uid).all()
+ d=db();u=current_user(request,d);uid=_uid(u);p=_profile_query(d,uid).first();all_jobs=d.query(Job).all();ratings=ratings_map(d,uid);apps=_user_applications(d,uid).all()
+ # Offres présentées : les anciennes/terminées ne comptent plus comme opportunités.
+ max_age=max_age_days((p.data if p else None) or {});app_jobs={a.job_id for a in apps}
+ jobs=[j for j in all_jobs if freshness(j,max_age)['fresh'] or j.id in app_jobs or (ratings.get(j.id).decision if ratings.get(j.id) is not None else j.decision)=='retained']
  def _score(j):
   r=ratings.get(j.id)
   return r.score if r is not None and r.score is not None else j.score
  def _dec(j):
   r=ratings.get(j.id)
   return r.decision if r is not None and r.decision else j.decision
- return {'profile_status':p.status if p else 'draft','jobs_count':len(jobs),'retained_count':sum(_dec(j)=='retained' for j in jobs),'high_score_count':sum((_score(j) or 0)>=7 for j in jobs),'applications_count':len(apps),'to_validate_count':sum(a.state=='to_validate' for a in apps),'market':analyze(d),'report':report(d,uid)}
+ return {'profile_status':p.status if p else 'draft','jobs_count':len(jobs),'old_count':len(all_jobs)-len(jobs),'retained_count':sum(_dec(j)=='retained' for j in jobs),'high_score_count':sum((_score(j) or 0)>=7 for j in jobs),'applications_count':len(apps),'to_validate_count':sum(a.state=='to_validate' for a in apps),'market':analyze(d),'report':report(d,uid)}

@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
-from . import jev
+from . import contracts, jev
 from .skills import match_skills
 
 logger = logging.getLogger(__name__)
@@ -86,10 +86,13 @@ def score_job(job, p):
         loc_ok = (not locs) or "remote" in remote or any(
             l in loc or loc in l for l in locs)
 
-    contracts = {n(x) for x in p.get("contracts", [])}
-    cval = n(_get(job, "contract", ""))
-    contract_ok = None if not cval else (
-        not contracts or any(c in cval or cval in c for c in contracts))
+    # Contrat et expérience : taxonomie canonique (CDI, CDD, stage,
+    # alternance…) et expérience exigée lue dans l'annonce (app/contracts.py).
+    # Un profil stage/alternance est incompatible avec une offre qui exige
+    # plusieurs années d'expérience ou un niveau senior.
+    fit = contracts.assess(job, p)
+    contract_ok = fit["contract_ok"]
+    experience_ok = fit["experience_ok"]
 
     sal_min = p.get("salary_min")
     smax = _get(job, "salary_max", None)
@@ -104,7 +107,8 @@ def score_job(job, p):
     excluded = any(n(x) in title or n(x) in desc for x in p.get("exclusions", []))
 
     gates = {"intitulé": title_ok, "localisation": loc_ok, "contrat": contract_ok,
-             "salaire": salary_ok, "exclusions": not excluded}
+             "expérience": experience_ok, "salaire": salary_ok,
+             "exclusions": not excluded}
     mandatory = all(v is not False for v in gates.values())
 
     # Dimension « compétences » : part de la **demande de l'offre** que le profil
@@ -133,7 +137,10 @@ def score_job(job, p):
         "salaire": _dim(salary_ok),
         "secteur": 1.0 if not excluded else 0.0,
     }
-    # L'heuristique ne sait pas évaluer l'expérience : son poids est redistribué.
+    # Expérience : évaluée seulement si l'annonce l'exprime (années, niveau) ;
+    # sinon son poids est redistribué sur les autres dimensions.
+    if fit["experience_fit"] is not None:
+        dims["experience"] = fit["experience_fit"]
     w = _weights(p, dims)
     raw = sum(dims[k] * w[k] for k in dims) * 10
     # Le plafond 3.9 ne s'applique qu'en cas de *vrai* conflit sur un filtre
@@ -154,13 +161,34 @@ def score_job(job, p):
         "gaps": sorted(unmatched_offer),
         "profile_gaps": sorted(_unmatched_profile),
         "competences_source": competences_source,
+        "contract_types": fit["contract_types"],
+        "experience_required": fit["experience"],
+        "blocking_reasons": fit["reasons"],
         "matched_offer_skills": sorted(matched_offer),
         "evidence": [f"compétences: {_get(job, 'skills', [])}",
                      f"intitulé: {_get(job, 'title', '')}",
                      f"localisation: {_get(job, 'location', '')}"],
-        "reason": "Filtre obligatoire respecté" if mandatory else "Filtre obligatoire non respecté",
+        "reason": _reason(mandatory, fit["reasons"]),
     }
     return final, confidence, explanation
+
+
+def _reason(mandatory: bool, reasons=None) -> str:
+    if mandatory:
+        return "Filtre obligatoire respecté"
+    if reasons:
+        return "Filtre obligatoire non respecté : " + " ; ".join(reasons)
+    return "Filtre obligatoire non respecté"
+
+
+def hard_excluded(job, p) -> bool:
+    """Vrai si l'offre viole une règle déterministe contrat/expérience.
+
+    Ces offres gardent la note heuristique (plafonnée) : inutile de payer une
+    notation Jev pour une offre CDI senior quand on cherche une alternance.
+    """
+    fit = contracts.assess(job, p)
+    return fit["contract_ok"] is False or fit["experience_ok"] is False
 
 
 def score_job_jev(job, p, answers: dict, meta: dict | None = None):
@@ -183,6 +211,10 @@ def score_job_jev(job, p, answers: dict, meta: dict | None = None):
                      not (dims[k] < 0.25 and answers[k]["confidence"] >= 0.5))
              for k, label in GATE_DIMS.items()}
     gates["exclusions"] = h_expl["gates"]["exclusions"]
+    # Les règles déterministes contrat/expérience priment sur l'avis du modèle.
+    for label in ("contrat", "expérience"):
+        if h_expl["gates"].get(label) is False:
+            gates[label] = False
     mandatory = all(v is not False for v in gates.values())
     final = round(raw if mandatory else min(raw, 3.9), 1)
     confidence = round(sum(answers[k]["confidence"] * w[k] for k in dims), 2)
@@ -197,7 +229,7 @@ def score_job_jev(job, p, answers: dict, meta: dict | None = None):
         "dimensions": {k: round(v * 10, 1) for k, v in dims.items()},
         "heuristic_score": h_score,
         "jev": {**(meta or {}), "answers": answers},
-        "reason": "Filtre obligatoire respecté" if mandatory else "Filtre obligatoire non respecté",
+        "reason": _reason(mandatory, h_expl.get("blocking_reasons")),
     }
     return final, confidence, explanation
 
@@ -243,7 +275,15 @@ def score_all(db, p, user_id=None):
             olds[j.id] = dict(j.explanation or {})
         except Exception:
             olds[j.id] = {}
-    jev_results = _jev_answers(jobs, p, olds) if jev.scorer_mode() == "jev" else {}
+    jev_results = {}
+    if jev.scorer_mode() == "jev":
+        # Jev (payant) seulement pour les offres présentées : ni anciennes ou
+        # terminées, ni incompatibles contrat/expérience (note heuristique).
+        from .freshness import freshness, max_age_days
+        max_age = max_age_days(p)
+        eligible = [j for j in jobs if freshness(j, max_age)["fresh"]
+                    and not hard_excluded(j, p)]
+        jev_results = _jev_answers(eligible, p, olds)
     for j in jobs:
         old = olds[j.id]
         answers, meta = jev_results.get(j.id, (None, {}))

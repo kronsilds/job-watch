@@ -197,6 +197,94 @@ propose alors un **repli** (`title`, `company`, `description`, facultatifs dans 
 body) qui ne remplit que les champs réellement vides — il ne remplace jamais une
 donnée extraite de l'annonce. Un profil validé reste requis, comme pour la veille.
 
+### Fraîcheur : annonces anciennes et terminées masquées
+
+`app/freshness.py` décide si une offre est encore présentée. Colonnes `jobs` :
+`published_at`, `expires_at`, `last_seen_at`, `availability`
+(`active` / `expired`), `availability_checked_at`, `availability_note`.
+
+1. **Date lue à la source** (gratuit) : `<time datetime>` des cartes LinkedIn,
+   « Publié il y a N jours » de France Travail, texte des cartes HelloWork /
+   Adzuna / Indeed (« Publié… » exigé chez Indeed, qui affiche aussi « Employeur
+   actif il y a… »), `datePosted` / `validThrough` JSON-LD (veille et lien
+   collé), `<lastmod>` du sitemap WTTJ, `datePublication` APEC, `dateCreation`
+   (API France Travail), `created` (API Adzuna). `parse_date` comprend l'ISO,
+   `jj/mm/aaaa`, « 12 novembre 2026 » et les formes relatives FR/EN.
+2. **Dernière apparition en veille** (gratuit) : sans date de publication, une
+   offre plus revue depuis `max_age_days` est périmée (repli : date d'import).
+3. **Vérification de la page** (une requête, quota partagé) :
+   `POST /api/jobs/{id}/check` (bouton « Vérifier » de chaque carte) et, en fin
+   de campagne, les `JOBWATCH_LIVENESS_MAX` (défaut 3) meilleures offres non
+   vérifiées depuis 3 jours. 404/410, redirection vers une page de recherche,
+   mention « offre n'est plus disponible » / « no longer accepting
+   applications » (texte visible uniquement, scripts ignorés) ou `validThrough`
+   dépassé → `availability="expired"`. Refus anti-bot ou quota atteint →
+   statut indéterminé, rien n'est contourné ni supposé.
+
+`max_age_days` se règle dans le profil (« Âge maximum des annonces », défaut
+`JOBWATCH_MAX_AGE_DAYS` ou 45). `GET /api/jobs` masque par défaut les offres
+anciennes, terminées ou périmées, **sauf** si elles sont retenues ou ont un
+dossier ; `include_old=true` les renvoie toutes avec `freshness`
+(`fresh`, `reason`, `age_days`, `basis`). `GET /api/overview` ne compte que les
+offres présentées (`jobs_count`) et expose `old_count`. Une offre revue dans
+une recherche redevient `active`. Jev n'est pas appelé pour les offres non
+présentées (économie d'appels).
+
+### Contrat et expérience qualifiés
+
+`app/contracts.py` ramène le contrat à une taxonomie fixe (`cdi`, `cdd`,
+`stage`, `alternance`, `freelance`, `interim`, `vie`, `saisonnier`) :
+champ contrat et intitulé lus largement (« Alternance - … », « Contrat
+d'apprentissage », `employmentType: INTERN`), description lue avec des
+tournures strictes (« en alternance », « stage de 6 mois », « poste en CDI » —
+« vous encadrerez des alternants » ne qualifie pas l'offre). Un contrat
+étudiant l'emporte sur CDD/CDI (une alternance est un CDD d'apprentissage) ;
+« Stage / Alternance » garde les deux. Mots entiers : « international » n'est
+plus pris pour un stage.
+
+L'expérience exigée (`extract_experience`) : années accolées à « expérience »
+(« 5 ans d'expérience minimum », « 3+ years », « Expérience exigée de 2
+An(s) »), jamais un âge (« moins de 30 ans ») ni l'ancienneté de l'entreprise ;
+niveau tiré de l'intitulé (senior / lead / junior) ; « débutant accepté ».
+
+Règles du scoring (`assess`, filtres `contrat` et `expérience`) :
+
+- profil **stage/alternance uniquement** : offre CDI/CDD/freelance → contrat
+  incompatible ; offre exigeant ≥ 2 ans ou de niveau senior/lead → expérience
+  incompatible (note plafonnée à 3.9, motif affiché) ;
+- autre profil : écart d'expérience ≥ 4 ans → incompatible ; écart de 1-2 ans →
+  dimension « expérience » à 5/10 ; surqualification (offre junior, ≥ 8 ans) →
+  pénalité douce ;
+- donnée absente → neutre, jamais bloquante. Les règles déterministes priment
+  sur l'avis de Jev, et une offre incompatible n'est pas envoyée à Jev.
+
+La veille d'un profil stage/alternance ajoute le contrat aux mots-clés
+(« data analyst alternance », « data analyst stage »).
+
+### Rapprochement des annonces entre sites
+
+`app/dedup.py` : la même annonce publiée sur plusieurs sites devient **une**
+ligne `jobs`, chaque diffusion étant tracée dans `job_sources` (site,
+`external_id`, lien, dates). Critères cumulés : même employeur après
+normalisation (formes juridiques, « Groupe », « France » retirés ; « Acme » =
+« Acme Consulting », mais « VINCI » ≠ « VINCI Energies ») — ou, employeur
+inconnu des deux côtés, descriptions très proches ; intitulés proches (sans
+« H/F » ni mention de contrat, Jaccard ≥ 0,75) ; villes compatibles ; contrats
+et niveaux non contradictoires. Un même site qui affiche deux liens différents
+désigne toujours deux offres distinctes.
+
+À l'import, une diffusion d'un autre site **complète** l'offre existante sans
+rien écraser (description la plus longue, contrat, salaire…). En fin de veille,
+`merge_duplicates` fusionne aussi les doublons déjà en base (offre conservée :
+celle qui porte un dossier, sinon une décision, sinon la plus ancienne ; notes
+et dossiers sont rattachés). CLI : `python -m app.cli dedupe`. `GET /api/jobs`
+expose `sources` (« Vue sur : HelloWork · France Travail » dans l'interface).
+
+Base existante : les nouvelles colonnes sont ajoutées au démarrage
+(`app/db.py::_add_missing_columns`, SQLite **et** Postgres) et la table
+`job_sources` est créée ; les offres antérieures reçoivent leur diffusion
+d'origine au premier rapprochement.
+
 ### Pré-notation + complétion ciblée (top-5/site) + note finale
 
 Pour limiter les appels coûteux, l'import suit désormais 3 temps

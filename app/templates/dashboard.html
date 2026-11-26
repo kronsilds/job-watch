@@ -8,10 +8,6 @@
   <header class="hero">
     <div><span class="eyebrow">JOB WATCH · AGENT LOOP</span><h1>Votre recherche,<br><em>en mouvement.</em></h1><p>Préparez votre profil, explorez le marché et pilotez chaque candidature au même endroit.</p></div>
     <div class="campaign-bar">
-      <select id="campaignSource" class="select" title="Source de la veille">
-        <option value="demo">Demo (fichier local)</option>
-        <option value="web">Web (connecteurs du profil)</option>
-      </select>
       <button id="campaignBtn" class="primary" onclick="runCampaign()">Lancer une campagne</button>
     </div>
   </header>
@@ -61,6 +57,7 @@
               <label class="field"><span>Exclusions (mots-clés)</span><textarea id="exclusions" rows="3" placeholder="défense&#10;jeux d'argent"></textarea><small class="hint">Une offre contenant un de ces mots est plafonnée par le scoring.</small></label>
               <label class="field"><span>Salaire minimum annuel (€)</span><input id="salary_min" type="number" min="0" step="1000" placeholder="60000"></label>
               <label class="field"><span>Salaire maximum annuel (€)</span><input id="salary_max" type="number" min="0" step="1000" placeholder="90000"></label>
+              <label class="field"><span>Âge maximum des annonces (jours)</span><input id="max_age_days" type="number" min="1" step="1" placeholder="45"><small class="hint">Au-delà, une annonce est masquée (publication, date limite ou dernière apparition en veille). Vide = 45 jours.</small></label>
               <label class="field field--wide"><span>Mobilité</span><textarea id="mobility" placeholder="Ex. France entière, 2 jours de déplacement par semaine"></textarea><small class="hint">Contraintes de déplacement, rythme accepté, régions exclues.</small></label>
             </div>
           </details>
@@ -116,7 +113,7 @@
         </details>
         <div id="importUrlResult" class="analysis empty" hidden></div>
       </div>
-      <div class="filters card" id="jobFilters"><label class="score-filter"><span>Score minimum</span><input id="minScore" type="number" min="0" max="10" step="0.5" value="0" inputmode="decimal"></label><label class="score-filter"><span>Décision</span><select id="decisionFilter" class="select"><option value="">Toutes</option><option value="new">Nouvelles</option><option value="retained">Retenues</option><option value="ignored">Ignorées</option></select></label><label class="score-filter"><span>Candidature</span><select id="applicationFilter" class="select"><option value="">Toutes</option><option value="yes">Avec dossier</option><option value="no">Sans dossier</option></select></label><label class="score-filter"><span>Tri</span><select id="sortFilter" class="select"><option value="score">Score décroissant</option><option value="date">Ajout récent</option><option value="title">Intitulé (A→Z)</option></select></label><button class="ghost filters-reset" type="button" onclick="resetJobFilters()">Réinitialiser</button></div>
+      <div class="filters card" id="jobFilters"><label class="score-filter"><span>Score minimum</span><input id="minScore" type="number" min="0" max="10" step="0.5" value="0" inputmode="decimal"></label><label class="score-filter"><span>Décision</span><select id="decisionFilter" class="select"><option value="">Toutes</option><option value="new">Nouvelles</option><option value="retained">Retenues</option><option value="ignored">Ignorées</option></select></label><label class="score-filter"><span>Candidature</span><select id="applicationFilter" class="select"><option value="">Toutes</option><option value="yes">Avec dossier</option><option value="no">Sans dossier</option></select></label><label class="score-filter"><span>Tri</span><select id="sortFilter" class="select"><option value="score">Score décroissant</option><option value="published">Publication récente</option><option value="date">Ajout récent</option><option value="title">Intitulé (A→Z)</option></select></label><label class="score-filter old-filter" title="Annonces publiées depuis plus longtemps que l'âge maximum du profil, terminées ou plus revues en veille"><span>Anciennes</span><span class="check"><input id="showOld" type="checkbox"> Afficher</span></label><button class="ghost filters-reset" type="button" onclick="resetJobFilters()">Réinitialiser</button></div>
       <div id="campaignReport" class="card report" hidden></div>
       <div id="marketAnalysis" class="card analysis" hidden></div>
       <div id="jobsFilterCount" class="filters-summary" hidden></div>
@@ -141,4 +138,4 @@
     <div class="agent-feed-head"><span class="agent-dot" aria-hidden="true"></span><strong id="agentFeedTitle">Agent</strong><button type="button" class="agent-close" onclick="closeAgentFeed()" aria-label="Fermer le fil d'activité">✕</button></div>
     <ol id="agentFeedSteps" class="agent-steps"></ol>
   </aside>
-<script src="/static/app.js?v=12"></script></body></html>
+<script src="/static/app.js?v=14"></script></body></html>
