@@ -39,7 +39,7 @@ def main():
  elif x.command=='campaign-run':
   p=d.query(Profile).filter_by(status='validated').first()
   if not p: raise SystemExit('Validez le profil avant de lancer une campagne.')
-  n=upsert_jobs(d,_records_for(d,x.source,x.file),profile_data=p.data);score_all(d,p.data);market=analyze(d);shortlisted=d.query(Job).filter(Job.score>=7,Job.decision=='new').count();analysis=market_analyzer(p.data,d);d.add(Event(kind='campaign',message='Campagne terminee',metadata_json={'source':x.source}));d.commit();print({'imported':n,'shortlisted':shortlisted,'market':market,'market_analysis':analysis})
+  n=upsert_jobs(d,_records_for(d,x.source,x.file),profile_data=p.data);score_all(d,p.data);market=analyze(d,p.data);shortlisted=d.query(Job).filter(Job.score>=7,Job.decision=='new').count();analysis=market_analyzer(p.data,d);d.add(Event(kind='campaign',message='Campagne terminee',metadata_json={'source':x.source}));d.commit();print({'imported':n,'shortlisted':shortlisted,'market':market,'market_analysis':analysis})
  elif x.command=='market-analyze': print(market_analyzer((d.query(Profile).filter_by(status='validated').first().data if d.query(Profile).filter_by(status='validated').first() else {}),d))
  elif x.command=='dedupe':
   from .dedup import merge_duplicates

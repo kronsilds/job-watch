@@ -234,6 +234,11 @@ def import_cv_stream(request:Request,file:UploadFile=File(...)):
  if Path(file.filename).suffix.lower() not in ('.pdf','.docx','.txt'):raise HTTPException(400,'Format accepté: PDF, DOCX ou TXT')
  content=file.file.read()
  return _stream(_safe(_cv_import_steps(file.filename,content)))
+def _job_view(d, uid, job, rating=None, profile=None):
+ """Évaluation de l'annonce pour ce compte (jamais celle d'un autre compte)."""
+ if uid is not None and rating is None:
+  rating=d.query(JobRating).filter_by(user_id=uid,job_id=job.id).first()
+ return overlay_job(job,rating,uid,profile)
 def _load_profile_data(d, uid=None):
  if uid is None and auth_enabled():
   p=d.query(Profile).filter(Profile.user_id.is_(None),Profile.status=='validated').first(); return p.data if p else None
@@ -325,7 +330,7 @@ def _liveness_steps(d,profile_data,uid):
  max_age=max_age_days(profile_data);ratings=ratings_map(d,uid)
  cands=[]
  for j in d.query(Job).all():
-  score,_c,dec,_e=overlay_job(j,ratings.get(j.id))
+  score,_c,dec,_e=overlay_job(j,ratings.get(j.id),uid,profile_data)
   if not j.url or not ((score or 0)>=7 or dec=='retained'):continue
   if not freshness(j,max_age)['fresh'] or not needs_check(j):continue
   cands.append((score or 0,j))
@@ -408,13 +413,14 @@ def _campaign_steps(source:str,enrich_skills:bool,analyze_market:bool, uid=None)
  score_all(d,profile_data,uid)
  if source in ('web','auto') or source in sources_for(profile_data):
   yield from _liveness_steps(d,profile_data,uid)
- shortlisted=d.query(Job).filter(Job.score>=7,Job.decision=='new').count();retained=d.query(Job).filter_by(decision='retained').count()
+ rmap=ratings_map(d,uid);views=[overlay_job(j,rmap.get(j.id),uid,profile_data) for j in d.query(Job).all()]
+ shortlisted=sum(1 for s,_c,dec,_e in views if (s or 0)>=7 and dec=='new');retained=sum(1 for _s,_c,dec,_e in views if dec=='retained')
  yield P.progress('market','Synthèse du marché…')
- summary=analyze(d);market_note=summarize(summary)
+ summary=analyze(d,profile_data,uid);market_note=summarize(summary)
  analysis=None
  if analyze_market:
   yield P.progress('market_analysis','Analyse du marché (LLM)…')
-  analysis=market_analyzer(profile_data,d)
+  analysis=market_analyzer(profile_data,d,uid)
  d.add(Event(user_id=uid,kind='campaign',message='Campaign completed',metadata_json={'source':source,'imported':n,'processed':total,'shortlisted':shortlisted,'retained':retained,'report':report}));d.commit()
  yield P.done({'imported':n,'processed':total,'shortlisted':shortlisted,'retained':retained,'source':source,'report':report,'market':summary,'market_summary':market_note,'market_analysis':analysis})
 @app.post('/api/campaign/run')
@@ -485,6 +491,7 @@ def jobs(request:Request,min_score:float=0,decision:str='',application:str='',in
  d=db();u=current_user(request,d);uid=_uid(u)
  ratings=ratings_map(d,uid)
  prof=_profile_query(d,uid).first();pdata=(prof.data if prof else None) or {}
+ vdata=pdata if prof is not None and prof.status=='validated' else None
  max_age=max_age_days(pdata);srcs=sources_map(d)
  all_jobs=d.query(Job).order_by(Job.id).all()
  idx={}
@@ -496,7 +503,7 @@ def jobs(request:Request,min_score:float=0,decision:str='',application:str='',in
  out=[]
  for j in all_jobs:
   r=ratings.get(j.id)
-  score,confidence,dec,expl=overlay_job(j,r)
+  score,confidence,dec,expl=overlay_job(j,r,uid,vdata)
   if (score or 0)<min_score:continue
   if decision and dec!=decision:continue
   apps=idx.get(j.id,[])
@@ -546,11 +553,13 @@ def debug_cache_replay(payload:CacheReplayRequest,request:Request):
  return res
 @app.get('/api/market')
 def market(request:Request,summary:bool=False,analysis:bool=False):
- data=analyze(db())
+ """Marché des annonces du profil (métiers visés, fraîcheur), pas du catalogue entier."""
+ d=db();u=current_user(request,d);uid=_uid(u)
+ p=_profile_query(d,uid).filter_by(status='validated').first();pdata=p.data if p else None
+ data=analyze(d,pdata,uid)
  if summary: data['summary']=summarize(data)
  if analysis:
-  d=db();u=current_user(request,d);p=_profile_query(d,_uid(u)).filter_by(status='validated').first()
-  data['analysis']=market_analyzer(p.data if p else {},d)
+  data['analysis']=market_analyzer(pdata or {},d,uid)
  return data
 @app.get('/',response_class=HTMLResponse)
 def dashboard(request: Request):
@@ -575,7 +584,11 @@ def _application_payload(d, a, jobs=None, histories=None, uid=None):
  """Dossier complet + chronologie datée (création, statuts, relances, envois)."""
  j=(jobs or {}).get(a.job_id) if jobs is not None else d.get(Job, a.job_id)
  hist=(histories or {}).get(a.id) if histories is not None else status_history(d, a.id, uid)
- return app_payload(a, j, history=hist)
+ view=None
+ if j is not None and a.user_id is not None:
+  owner=d.query(Profile).filter_by(user_id=a.user_id,status='validated').first()
+  view=_job_view(d,a.user_id,j,None,owner.data if owner else None)
+ return app_payload(a, j, history=hist, job_view=view)
 
 def _user_applications(d, uid):
  q=d.query(Application)
@@ -792,13 +805,14 @@ KANBAN_COLUMNS=['draft','submitted','screening','interview','offer','rejected','
 def kanban(request:Request):
  d=db();u=current_user(request,d);uid=_uid(u);jobs={j.id:j for j in d.query(Job).all()};hist=history_index(d,None,uid);cards=[]
  ratings=ratings_map(d,uid)
+ kprof=_profile_query(d,uid).filter_by(status='validated').first();kdata=kprof.data if kprof else None
  for a in _user_applications(d,uid).order_by(Application.kanban_order,Application.id).all():
   j=jobs.get(a.job_id);history=hist.get(a.id,[])
   # Dates utiles au board : création du dossier et dernier mouvement de statut.
   created=next((h['at'] for h in history if h['kind']=='application_created'),None)
   moved=next((h['at'] for h in reversed(history) if h['kind'] in ('status_changed','state_change','email_sent')),None)
   r=ratings.get(a.job_id) if j else None
-  score=(r.score if r is not None and r.score is not None else (j.score if j else None))
+  score=overlay_job(j,r,uid,kdata)[0] if j else None
   cards.append({'id':a.id,'job_id':a.job_id,'state':a.state,'status':a.status,'followup_state':a.followup_state,'followup_due_at':a.followup_due_at.isoformat() if a.followup_due_at else None,'submitted_at':a.submitted_at.isoformat() if a.submitted_at else None,'job_title':j.title if j else '','company':j.company if j else '','location':j.location if j else '','contract':j.contract if j else '','score':score,'email_subject':a.email_subject or '','pitch':a.pitch or '','job_created_at':j.created_at.isoformat() if j and j.created_at else None,'application_created_at':created,'status_updated_at':moved})
  return {'columns':KANBAN_COLUMNS,'cards':cards}
 @app.get('/api/report')
@@ -811,10 +825,8 @@ def overview(request:Request):
  # Offres présentées : les anciennes/terminées ne comptent plus comme opportunités.
  max_age=max_age_days((p.data if p else None) or {});app_jobs={a.job_id for a in apps}
  jobs=[j for j in all_jobs if freshness(j,max_age)['fresh'] or j.id in app_jobs or (ratings.get(j.id).decision if ratings.get(j.id) is not None else j.decision)=='retained']
- def _score(j):
-  r=ratings.get(j.id)
-  return r.score if r is not None and r.score is not None else j.score
- def _dec(j):
-  r=ratings.get(j.id)
-  return r.decision if r is not None and r.decision else j.decision
- return {'profile_status':p.status if p else 'draft','jobs_count':len(jobs),'old_count':len(all_jobs)-len(jobs),'retained_count':sum(_dec(j)=='retained' for j in jobs),'high_score_count':sum((_score(j) or 0)>=7 for j in jobs),'applications_count':len(apps),'to_validate_count':sum(a.state=='to_validate' for a in apps),'market':analyze(d),'report':report(d,uid)}
+ vdata=p.data if p is not None and p.status=='validated' else None
+ views={j.id:overlay_job(j,ratings.get(j.id),uid,vdata) for j in jobs}
+ def _score(j):return views[j.id][0]
+ def _dec(j):return views[j.id][2]
+ return {'profile_status':p.status if p else 'draft','jobs_count':len(jobs),'old_count':len(all_jobs)-len(jobs),'retained_count':sum(_dec(j)=='retained' for j in jobs),'high_score_count':sum((_score(j) or 0)>=7 for j in jobs),'applications_count':len(apps),'to_validate_count':sum(a.state=='to_validate' for a in apps),'market':analyze(d,vdata,uid),'report':report(d,uid)}

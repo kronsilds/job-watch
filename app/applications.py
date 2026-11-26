@@ -58,23 +58,28 @@ def build_instruction(job, facts):
     return instruction
 
 
-def job_payload(job):
+def job_payload(job, view=None):
+    """Annonce d'un dossier ; ``view`` = ``(score, confidence, decision,
+    explanation)`` personnels du compte (voir ``user_jobs.overlay_job``), à
+    défaut les champs de l'annonce (mode mono-utilisateur)."""
     if job is None:
         return None
+    score, confidence, decision, explanation = view if view is not None else (
+        job.score, job.confidence, job.decision, job.explanation or {})
     return {
         'id': job.id, 'external_id': job.external_id, 'title': job.title or '',
         'company': job.company or '', 'location': job.location or '',
         'remote': job.remote or '', 'contract': job.contract or '',
-        'score': job.score, 'confidence': job.confidence, 'decision': job.decision,
+        'score': score, 'confidence': confidence, 'decision': decision,
         'skills': list(job.skills or []), 'sectors': list(job.sectors or []),
         'salary_min': job.salary_min, 'salary_max': job.salary_max,
         'url': job.url or '', 'description': job.description or '',
-        'explanation': job.explanation or {},
+        'explanation': explanation or {},
         'created_at': job.created_at.isoformat() if getattr(job, 'created_at', None) else None,
     }
 
 
-def app_payload(app, job=None, history=None):
+def app_payload(app, job=None, history=None, job_view=None):
     payload = {
         'id': app.id, 'job_id': app.job_id, 'state': app.state,
         'status': app.status, 'followup_state': app.followup_state,
@@ -87,7 +92,7 @@ def app_payload(app, job=None, history=None):
         'history': list(history or []),
     }
     if job is not None:
-        payload['job'] = job_payload(job)
+        payload['job'] = job_payload(job, job_view)
     return payload
 
 

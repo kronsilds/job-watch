@@ -20,6 +20,27 @@ lorsqu'elles sont configurées. Aucun envoi d'e-mail réel sans approbation.
   vivent dans `job_ratings` (unicité `(user_id, job_id)`) ; `GET /api/jobs`,
   `/api/overview`, `/api/kanban` et le compte rendu d'import par lien exposent
   la vue de l'utilisateur courant.
+- **Faits partagés, évaluation personnelle** (`app/user_jobs.py`) :
+
+  | Sur l'annonce (`jobs`, commun) | Par compte (`job_ratings`) | Calculé à la volée par compte |
+  |---|---|---|
+  | texte, entreprise, lieu, contrat, salaire, compétences | note, confiance, décision | fraîcheur (âge maximum du profil) |
+  | dates de publication, limite, dernière apparition | explication : filtres, dimensions, compétences communes, motifs bloquants | signaux des cartes |
+  | statut en ligne (`availability`, `live_confirmed_at`), diffusions (`job_sources`), provenance | pré-note (heuristique sur ce profil), cache Jev | compatibilité contrat/expérience |
+
+  En mode multi-comptes, `score_all(db, profil, user_id)` n'écrit **que** dans
+  `job_ratings` (le cache Jev est lu dans la notation du compte : la notation
+  d'un autre compte ne l'invalide plus). Un compte sans notation personnelle
+  pour une annonce (importée par la campagne d'un autre, par exemple) voit une
+  **note provisoire** calculée sur son propre profil (`explanation.provisional`),
+  jamais l'évaluation d'un autre ; une décision prise sur une annonce non notée
+  crée une notation vide (jamais copiée). Les dossiers de candidature affichent
+  l'évaluation de leur propriétaire. Le mode mono-utilisateur
+  (`JOBWATCH_SINGLE_USER=1`) garde l'évaluation sur l'annonce.
+- **Catalogue = union des veilles** : chaque campagne filtre la collecte selon
+  le profil qui la lance (métiers, contrats, zone, âge) ; les annonces
+  importées profitent ensuite à tous les comptes, chacun les notant selon son
+  profil.
 - **Isolés par compte** : profil, candidatures (création, génération, contenus,
   états, relances, statuts, envois), événements pipeline et audit. La
   chronologie d'un dossier (`history`) est reconstruite depuis l'audit du
@@ -552,6 +573,16 @@ Le dashboard intègre un **configurateur graphique de pondération** (curseurs s
 dans `data["ponderation"]` et appliquées au scoring dès la validation du profil.
 
 ## Analyse du marché
+
+L'analyse porte sur les **annonces du profil**, pas sur tout le catalogue
+partagé (`app/market.py::profile_jobs`) : annonces présentées à ce compte
+(fraîcheur selon son âge maximum) et relevant de ses métiers visés ou
+connexes — intitulé contenant leurs mots, ou intitulé jugé proche par la
+notation de ce compte (dimension « métier » ≥ 6/10). Les faits précisent
+`scope` (`profil` / `catalogue` hors compte), `catalog_count`, et la
+répartition des contrats. Concerne `GET /api/market`, la vue d'ensemble
+(`/api/overview`, « compétence la plus demandée parmi les N offres de votre
+profil ») et la synthèse de fin de campagne.
 
 `GET /api/market?analysis=true` et la campagne renvoient une **analyse du
 marché** qui distingue **faits collectés** (agrégats heuristiques) et

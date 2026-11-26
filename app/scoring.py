@@ -208,6 +208,15 @@ def score_job_jev(job, p, answers: dict, meta: dict | None = None):
             for k, a in (answers or {}).items() if a.get("max")}
     if not dims:
         return h_score, h_conf, h_expl
+    # Contrat : vérification factuelle (taxonomie CDI/CDD/stage/alternance…).
+    # Quand le type de l'offre figure parmi les contrats recherchés, l'avis du
+    # modèle ne peut ni bloquer l'offre ni dégrader la dimension (Jev jugeait
+    # parfois un CDI « incompatible » avec un profil « Indépendant, CDD, CDI »).
+    contract_checked = (h_expl["gates"].get("contrat") is True
+                        and bool(h_expl.get("contract_types"))
+                        and bool(contracts.profile_targets(p)))
+    if contract_checked and "contrat" in dims:
+        dims["contrat"] = 1.0
     w = _weights(p, dims)
     raw = sum(dims[k] * w[k] for k in dims) * 10
     # Filtre bloquant : Jev place l'offre nettement au niveau 0 avec assurance.
@@ -215,6 +224,8 @@ def score_job_jev(job, p, answers: dict, meta: dict | None = None):
     gates = {label: (None if k not in dims else
                      not (dims[k] < 0.25 and answers[k]["confidence"] >= 0.5))
              for k, label in GATE_DIMS.items()}
+    if contract_checked:
+        gates["contrat"] = True
     gates["exclusions"] = h_expl["gates"]["exclusions"]
     # Les règles déterministes contrat/expérience priment sur l'avis du modèle.
     for label in ("contrat", "expérience"):
@@ -272,12 +283,28 @@ def _jev_answers(jobs, p, olds):
 
 
 def score_all(db, p, user_id=None):
+    """Note toutes les annonces pour un profil.
+
+    * Multi-comptes (``user_id``) : la notation n'est écrite que dans
+      ``job_ratings`` (une ligne par compte) — l'annonce partagée ne reçoit
+      aucune donnée dépendant d'un profil. Le cache Jev est lu dans la notation
+      de ce compte : la notation d'un autre compte ne l'invalide pas. La
+      « pré-note » est l'heuristique (gratuite) calculée sur ce profil.
+    * Mono-utilisateur (``user_id`` None) : comportement historique, l'annonce
+      porte la notation (et la pré-note de l'import).
+    """
     from .models import Job, JobRating
     jobs = list(db.query(Job))
+    ratings = ({r.job_id: r for r in db.query(JobRating).filter_by(user_id=user_id).all()}
+               if user_id is not None else {})
     olds = {}
     for j in jobs:
         try:
-            olds[j.id] = dict(j.explanation or {})
+            if user_id is None:
+                olds[j.id] = dict(j.explanation or {})
+            else:
+                r = ratings.get(j.id)
+                olds[j.id] = dict(r.explanation or {}) if r is not None else {}
         except Exception:
             olds[j.id] = {}
     jev_results = {}
@@ -290,30 +317,31 @@ def score_all(db, p, user_id=None):
                     and not hard_excluded(j, p)]
         jev_results = _jev_answers(eligible, p, olds)
     for j in jobs:
-        old = olds[j.id]
         answers, meta = jev_results.get(j.id, (None, {}))
         if answers:
-            j.score, j.confidence, j.explanation = score_job_jev(j, p, answers, meta)
+            score, confidence, explanation = score_job_jev(j, p, answers, meta)
         else:
-            j.score, j.confidence, j.explanation = score_job(j, p)
+            score, confidence, explanation = score_job(j, p)
             if meta.get("error"):
-                j.explanation = {**j.explanation, "jev_error": meta["error"]}
-        # Métadonnées portées uniquement par l'import : provenance de l'annonce
-        # (`source`) et pré-note de la passe 1. Le scoring (passe 2) reconstruit
-        # l'explication, donc on les reporte explicitement.
-        carried = {k: old[k] for k in ("prescore", "source") if old.get(k) not in (None, "")}
-        if carried:
-            try:
-                j.explanation = {**(j.explanation or {}), **carried}
-            except Exception:
-                pass
-    if user_id is not None:
-        for j in jobs:
-            r = db.query(JobRating).filter_by(user_id=user_id, job_id=j.id).first()
-            if not r:
-                r = JobRating(user_id=user_id, job_id=j.id); db.add(r)
-            r.score = j.score; r.confidence = j.confidence
-            r.explanation = dict(j.explanation or {})
-            if not r.decision or r.decision not in ("new", "retained", "ignored"):
-                r.decision = "new"
+                explanation = {**explanation, "jev_error": meta["error"]}
+        facts = dict(j.explanation or {})
+        if user_id is None:
+            # Métadonnées portées par l'import : provenance (`source`) et
+            # pré-note de la passe 1, reportées dans l'explication reconstruite.
+            carried = {k: facts[k] for k in ("prescore", "source")
+                       if facts.get(k) not in (None, "")}
+            j.score, j.confidence = score, confidence
+            j.explanation = {**explanation, **carried}
+            continue
+        explanation = {**explanation,
+                       "prescore": explanation.get("heuristic_score", score)}
+        if facts.get("source"):
+            explanation["source"] = facts["source"]  # fait partagé : la provenance
+        r = ratings.get(j.id)
+        if r is None:
+            r = JobRating(user_id=user_id, job_id=j.id); db.add(r)
+            ratings[j.id] = r
+        r.score, r.confidence, r.explanation = score, confidence, explanation
+        if not r.decision or r.decision not in ("new", "retained", "ignored"):
+            r.decision = "new"
     db.commit()

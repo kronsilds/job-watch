@@ -130,6 +130,14 @@ class LLMProvider:
         raise NotImplementedError
 
 
+def _market_count(market: dict) -> str:
+    """« 12 offres correspondant au profil (sur 727 au catalogue). »"""
+    if market.get("scope") == "profil":
+        return (f"{market.get('jobs_count', 0)} offres correspondant au profil "
+                f"(sur {market.get('catalog_count', 0)} au catalogue).")
+    return f"{market.get('jobs_count', 0)} offres indexées."
+
+
 class DeterministicProvider(LLMProvider):
     name = "deterministic"
 
@@ -236,7 +244,7 @@ class DeterministicProvider(LLMProvider):
         if market.get("skills"):
             top_skill = market["skills"][0][0]
         return {
-            "summary": f"{market.get('jobs_count', 0)} offres indexées. "
+            "summary": f"{_market_count(market)} "
                        f"Compétence la plus demandée : {top_skill or 'n.c.'}.",
             "trends": [],
             "recommendation": "Consultez la veille et affinez le profil pour améliorer le scoring.",
@@ -246,7 +254,7 @@ class DeterministicProvider(LLMProvider):
         mots = " ; ".join(profil.get("metiers_vises") or profil.get("jobs") or profil.get("metiers") or [])
         top = market.get("skills") or []
         return {
-            "summary": f"Analyse heuristique. {market.get('jobs_count', 0)} offres indexées.",
+            "summary": f"Analyse heuristique. {_market_count(market)}",
             "trends": [f"Compétence la plus demandée : {top[0][0]}" if top else "Peu d'offres collectées."],
             "keywords": [mots] if mots else [],
             "seniorities": profil.get("seniorite") or [],

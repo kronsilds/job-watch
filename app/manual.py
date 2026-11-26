@@ -510,7 +510,8 @@ def store_offer(db, offer: dict, meta: dict,
     if user_id is not None:
         from .models import JobRating
         rating = db.query(JobRating).filter_by(user_id=user_id, job_id=job.id).first()
-    score, confidence, decision, explanation = overlay_job(job, rating)
+    score, confidence, decision, explanation = overlay_job(
+        job, rating, user_id, profile_data if user_id is not None else None)
     report = {
         "url": url,
         "canonical_url": canonical_url(url),
@@ -527,7 +528,8 @@ def store_offer(db, offer: dict, meta: dict,
         "gaps": explanation.get("gaps") or [],
         "missing_fields": meta.get("missing") or [],
     }
-    return {"job": job_payload(job), "report": report}
+    return {"job": job_payload(job, (score, confidence, decision, explanation)),
+            "report": report}
 
 
 def import_from_url(db, url: str, profile_data: dict | None = None,

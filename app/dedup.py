@@ -374,8 +374,8 @@ def merge_into(db, keep, dup) -> None:
     db.delete(dup)
 
 
-def _keep_rank(job, with_app: set) -> tuple:
-    decided = job.decision not in (None, "", "new")
+def _keep_rank(job, with_app: set, decided_ids: set = frozenset()) -> tuple:
+    decided = job.decision not in (None, "", "new") or job.id in decided_ids
     return (job.id not in with_app, not decided, job.id)
 
 
@@ -407,11 +407,15 @@ def merge_duplicates(db) -> int:
     from .models import Application, Job
     ensure_sources(db)
     from .models import JobSource
+    from .models import JobRating
     with_app = {row[0] for row in db.query(Application.job_id).all()}
+    # Décisions personnelles (retenue/ignorée) d'un compte quelconque.
+    decided = {row[0] for row in db.query(JobRating.job_id)
+               .filter(JobRating.decision.in_(("retained", "ignored"))).all()}
     postings: dict[int, list[tuple[str, str]]] = {}
     for row in db.query(JobSource).all():
         postings.setdefault(row.job_id, []).append((row.source, row.url))
-    jobs = sorted(db.query(Job).all(), key=lambda j: _keep_rank(j, with_app))
+    jobs = sorted(db.query(Job).all(), key=lambda j: _keep_rank(j, with_app, decided))
     kept: list = []
     by_company: dict[str, list] = {}
     anonymous: list = []

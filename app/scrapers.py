@@ -311,11 +311,14 @@ def enrich_skills_from_text(offer: dict) -> dict:
     sectors = list(offer.get("sectors") or [])
     text = " ".join(x for x in (offer.get("title"), offer.get("description")) if x)
     low = re.sub(r"\s+", " ", text).lower()
+    raw = re.sub(r"\s+", " ", text)
     for category, keywords in load_keywords().get("skills", {}).items():
         matched = [
             k for k in keywords
-            if re.search(rf"(?<![a-z0-9]){re.escape(k)}(?![a-z0-9])", low)
-        ]
+            if (re.search(rf"(?<![A-Za-z0-9&'’]){re.escape(k.upper())}(?![A-Za-z0-9&'’])", raw)
+                if len(k.strip()) == 1 else
+                re.search(rf"(?<![a-z0-9]){re.escape(k)}(?![a-z0-9])", low))
+        ]  # une lettre (« r », « c ») : majuscule isolée exigée, pas « R&D » ni « l'r »
         for skill in matched:
             if skill not in skills:
                 skills.append(skill)

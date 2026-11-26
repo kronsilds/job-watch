@@ -71,7 +71,9 @@ def test_score_all_uses_jev_and_caches(db, monkeypatch):
     monkeypatch.setattr(jev, 'evaluate', fake_eval)
     score_all(db, PROFILE)
     j = db.query(Job).first()
-    assert j.explanation['scorer'] == 'jev' and j.score == 8.0 and len(calls) == 1
+    # Toutes les dimensions à 0,8 sauf le contrat : CDI = CDI, vérifié en code (10/10).
+    assert j.explanation['scorer'] == 'jev' and j.score == 8.2 and len(calls) == 1
+    assert j.explanation['dimensions']['contrat'] == 10.0
     score_all(db, PROFILE)  # rien n'a changé : aucune nouvelle requête
     assert len(calls) == 1
     score_all(db, {**PROFILE, 'locations': ['Paris']})  # profil modifié : re-notation
