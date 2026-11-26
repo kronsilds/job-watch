@@ -28,6 +28,9 @@ from .contracts import fold
 DEFAULT_MAX_AGE_DAYS = 45
 # Délai avant de re-vérifier la page d'une offre déjà contrôlée.
 RECHECK_DAYS = 3
+# Une offre confirmée en ligne (toujours affichée par l'entreprise, ou page
+# vérifiée) reste présentée pendant ce délai, quel que soit son âge.
+LIVE_DAYS = int(os.getenv("JOBWATCH_LIVE_DAYS") or 14)
 
 
 def utcnow() -> datetime:
@@ -196,6 +199,10 @@ def freshness(job, max_age: int = DEFAULT_MAX_AGE_DAYS,
 
     * ``availability == "expired"`` (page vérifiée) → terminée ;
     * ``expires_at`` dépassée → date limite dépassée ;
+    * **confirmée en ligne** depuis moins de ``LIVE_DAYS`` jours (toujours
+      affichée sur la page carrières de l'entreprise, offre « Active » de La
+      bonne alternance, ou page vérifiée) → présentée quel que soit son âge,
+      ``basis = "en_ligne"`` ;
     * ``published_at`` plus vieille que ``max_age`` → ancienne ;
     * sans date de publication : dernière apparition en veille (ou date
       d'import) plus vieille que ``max_age`` → périmée.
@@ -212,6 +219,12 @@ def freshness(job, max_age: int = DEFAULT_MAX_AGE_DAYS,
     if exp and exp < now:
         return {**out, "fresh": False, "basis": "expiration",
                 "reason": f"date limite de candidature dépassée ({exp:%d/%m/%Y})"}
+    checked = aware(_get(job, "live_confirmed_at"))
+    if checked and (now - checked) <= timedelta(days=LIVE_DAYS):
+        old = (pub and age > max_age)
+        return {**out, "basis": "en_ligne", "confirmed_at": checked.isoformat(),
+                "note": (f"publiée il y a {age} jours, toujours en ligne" if old
+                         else "toujours en ligne")}
     if pub:
         if age > max_age:
             return {**out, "fresh": False, "reason": f"publiée il y a {age} jours"}
@@ -308,11 +321,13 @@ def apply_check(job, result: dict, now: datetime | None = None) -> None:
     job.availability_checked_at = now
     status = result.get("status")
     if status == "expired":
+        job.live_confirmed_at = None
         job.availability = "expired"
         job.availability_note = str(result.get("reason") or "annonce terminée")[:300]
     elif status == "active":
         job.availability = "active"
         job.availability_note = ""
+        job.live_confirmed_at = now  # page vérifiée : présentée malgré son âge
     else:
         job.availability_note = str(result.get("reason") or "")[:300]
 

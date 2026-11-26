@@ -19,6 +19,7 @@ from .scoring import score_all
 from .dedup import sources_map, merge_duplicates
 from .freshness import freshness, max_age_days, check_offer, apply_check, needs_check, iso as _iso
 from . import contracts as _contracts
+from .signals import job_signals
 from .market import analyze,summarize,analyze_market as market_analyzer
 from .config import DEMO_PATH
 from fastapi.openapi.utils import get_openapi
@@ -505,7 +506,8 @@ def jobs(request:Request,min_score:float=0,decision:str='',application:str='',in
   if not include_old and not fr['fresh'] and dec!='retained' and not apps: continue
   fit=_contracts.assess(j,pdata)
   sources=srcs.get(j.id) or ([{'source':(expl or {}).get('source') or '','url':j.url,'published_at':_iso(j.published_at),'last_seen_at':_iso(j.last_seen_at)}] if j.url else [])
-  out.append({'published_at':_iso(j.published_at),'expires_at':_iso(j.expires_at),'last_seen_at':_iso(j.last_seen_at),'availability':j.availability or 'active','availability_note':j.availability_note or '','availability_checked_at':_iso(j.availability_checked_at),'freshness':fr,'contract_types':fit['contract_types'],'contract_label':_contracts.labels(fit['contract_types']),'experience':fit['experience'],'experience_label':_contracts.experience_label(fit['experience']),'sources':sources,'id':j.id,'title':j.title,'company':j.company,'location':j.location,'remote':j.remote,'contract':j.contract,'score':score,'confidence':confidence,'decision':dec,'skills':j.skills,'sectors':j.sectors,'salary_min':j.salary_min,'salary_max':j.salary_max,'url':j.url,'description':j.description,'explanation':expl,'created_at':j.created_at.isoformat() if j.created_at else None,'applications':apps,'has_application':bool(apps),'application_id':apps[0]['id'] if apps else None})
+  signals=job_signals(j,expl,fr,sources,_contracts.labels(fit['contract_types']))
+  out.append({'signals':signals,'published_at':_iso(j.published_at),'expires_at':_iso(j.expires_at),'last_seen_at':_iso(j.last_seen_at),'availability':j.availability or 'active','availability_note':j.availability_note or '','availability_checked_at':_iso(j.availability_checked_at),'freshness':fr,'contract_types':fit['contract_types'],'contract_label':_contracts.labels(fit['contract_types']),'experience':fit['experience'],'experience_label':_contracts.experience_label(fit['experience']),'sources':sources,'id':j.id,'title':j.title,'company':j.company,'location':j.location,'remote':j.remote,'contract':j.contract,'score':score,'confidence':confidence,'decision':dec,'skills':j.skills,'sectors':j.sectors,'salary_min':j.salary_min,'salary_max':j.salary_max,'url':j.url,'description':j.description,'explanation':expl,'created_at':j.created_at.isoformat() if j.created_at else None,'applications':apps,'has_application':bool(apps),'application_id':apps[0]['id'] if apps else None})
  out.sort(key=lambda x:((x['score'] or 0),x['id']),reverse=True)
  return out
 @app.post('/api/jobs/{job_id}/check',summary="Vérifier que l'annonce est toujours en ligne")

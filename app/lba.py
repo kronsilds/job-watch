@@ -187,6 +187,7 @@ def search(profile: dict) -> list[dict]:
     out = []
     for item in items[:cap]:
         rec = normalize(item, "labonnealternance")
+        rec["_live"] = True  # statut « Active » sur la plateforme : offre ouverte
         rec["external_id"] = item["id"]  # identifiant stable de l'API
         out.append(rec)
     return out

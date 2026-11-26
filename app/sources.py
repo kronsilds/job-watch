@@ -140,6 +140,9 @@ def upsert_jobs(db,records,provider=None,profile_data=None,top_n: int | None = N
   r = dict(r)
   prescore = r.pop("_prescore", None)
   source = r.pop("_source", None); r.pop("_selected", None)
+  # Offre toujours affichée par l'entreprise (page carrières) ou « Active » chez
+  # La bonne alternance : confirmée en ligne, présentée quel que soit son âge.
+  live = bool(r.pop("_live", False))
   eid=str(r.get("external_id") or r.get("id") or f"manual-{r.get('title','')}-{r.get('company','')}")
   j = index.by_external_id(eid)
   is_new = False
@@ -166,9 +169,11 @@ def upsert_jobs(db,records,provider=None,profile_data=None,top_n: int | None = N
   if exp and (aware(j.expires_at) is None or exp > aware(j.expires_at)):
    j.expires_at = exp
   j.last_seen_at = now
-  if j.availability is None or (j.availability == "expired" and (exp is None or exp > now)):
+  if j.availability is None or live or (j.availability == "expired" and (exp is None or exp > now)):
    # Revue dans une recherche : de nouveau en ligne.
    j.availability = "active"; j.availability_note = ""
+  if live:
+   j.live_confirmed_at = now
   # Provenance (affichée dans l'UI) et pré-note : conservées dans `explanation`
   # car ce sont les seules informations que `Job` ne porte pas ailleurs.
   try:

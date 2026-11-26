@@ -31,7 +31,7 @@ import re
 import httpx
 
 from .prompts import load_keywords
-from . import careers, lba, websearch
+from . import careers, lba, opensearch, websearch
 
 BASE_FRANCE_TRAVAIL = os.getenv(
     "FRANCE_TRAVAIL_URL",
@@ -73,8 +73,10 @@ def sources_for(profile: dict) -> list[str]:
     """Liste dynamique des connecteurs à interroger, depuis le profil.
 
     S'y ajoutent automatiquement : ``labonnealternance`` quand le profil
-    cherche une alternance et que ``LBA_API_KEY`` est configurée, et
-    ``career_pages`` quand le profil liste des pages carrières.
+    cherche une alternance et que ``LBA_API_KEY`` est configurée,
+    ``career_pages`` quand le profil liste des pages carrières, et
+    ``search_engine`` quand un moteur de recherche est configuré (Tavily ou
+    SearXNG).
     """
     from . import careers, contracts, lba
     val = profile.get("sources")
@@ -85,6 +87,8 @@ def sources_for(profile: dict) -> list[str]:
         val.append("labonnealternance")
     if careers.career_pages_for(profile):
         val.append("career_pages")
+    if opensearch.enabled():
+        val.append("search_engine")
     out = []
     for name in val:
         name = str(name).strip().lower()
@@ -184,6 +188,7 @@ CONNECTORS = {
     "hellowork": websearch.hellowork,
     "labonnealternance": lba.search,
     "career_pages": careers.search,
+    "search_engine": opensearch.search,
 }
 
 

@@ -148,7 +148,9 @@ Le connecteur (`app/scrapers.py` + `app/websearch.py`) est **générique et conf
   requêtes) : une URL en échec ne bloque jamais les autres.
 
 - **Fair use** (usage personnel, quelques requêtes/jour) : User-Agent honnête,
-  délai aléatoire 2–5 s entre requêtes, quota quotidien (`JOBWATCH_WEB_DAILY_LIMIT`),
+  délai aléatoire 2–5 s entre requêtes, quota quotidien (`JOBWATCH_WEB_DAILY_LIMIT`,
+  compteur en base avec Postgres — partagé entre les instances Vercel, table
+  `web_usage` — et en fichier avec SQLite ; `JOBWATCH_WEB_QUOTA_STORE`),
   cache disque 6 h, et **aucun contournement** des protections *techniques*
   (403/429/captcha → la source est signalée en erreur dans le rapport, sans
   bloquer les autres — c'est le cas d'Indeed).
@@ -201,6 +203,55 @@ Le connecteur (`app/scrapers.py` + `app/websearch.py`) est **générique et conf
   Teamtailor (flux `{site}/jobs.rss`) ; toute autre page : JSON-LD
   `JobPosting`. Une requête par page via `fetch_page` (charte fair use) ; une
   page en échec n'empêche pas les autres. Mêmes filtres et tri que WTTJ.
+
+### Recherche ouverte par moteur de recherche
+
+`app/opensearch.py` (connecteur `search_engine`, ajouté d'office dès qu'un
+moteur est configuré) va chercher ce que les agrégateurs ne voient pas : les
+offres publiées sur les pages carrières et les plateformes de recrutement.
+
+| Moteur | Configuration | Remarques |
+|---|---|---|
+| Tavily | `TAVILY_API_KEY` | service hébergé, adapté à Vercel ; `POST https://api.tavily.com/search` (`Authorization: Bearer`), 1 crédit par recherche, 1 000 gratuits/mois |
+| SearXNG | `SEARXNG_URL` | métamoteur libre auto-hébergé (Docker) ; `GET /search?format=json` — le format `json` doit figurer dans `search.formats` de `settings.yml` ; identifiants acceptés dans l'URL (`https://user:mdp@hôte`) |
+
+`JOBWATCH_SEARCH_PROVIDER` = `auto` (Tavily si clé, sinon SearXNG) | `tavily`
+| `searxng` | `off`. SearXNG ne peut pas tourner sur Vercel (serveur
+permanent) : il doit être hébergé ailleurs et protégé (il n'a pas
+d'authentification propre).
+
+Déroulé, pour chaque métier du profil (et type de contrat d'un profil
+stage/alternance), dans la limite de `JOBWATCH_SEARCH_MAX_QUERIES` (défaut 4) :
+
+1. recherche **ciblée plateformes** (`data analyst alternance Paris`,
+   domaines Lever, Greenhouse, Ashby, SmartRecruiters, Teamtailor — via
+   `include_domains` chez Tavily, `site:… OR …` chez SearXNG) puis recherche
+   **ouverte** (`… recrutement`, en écartant les sites déjà couverts et les
+   agrégateurs, reconnus par leur marque quel que soit le pays : LinkedIn,
+   Indeed, HelloWork, France Travail, Adzuna, WTTJ, APEC, La bonne alternance,
+   Glassdoor, JobTeaser, Cadremploi, Jooble…). Mesuré en réel : sans
+   guillemets (une correspondance exacte divisait les résultats par 10), sans
+   filtre de date ni de pays (les pages des plateformes n'affichent pas de
+   date de publication et étaient écartées) ;
+2. un résultat sur une plateforme de recrutement donne le **tableau d'offres de
+   l'entreprise**, lu par `app/careers.py` (toutes ses offres du métier) : le
+   moteur sert à découvrir les entreprises qui recrutent ;
+3. les autres résultats ressemblant à une page d'offre (chemin avec
+   « job », « emploi », « offre », « carrière »… hors pages de recherche) sont
+   lus un par un ; seuls ceux qui décrivent une offre en JSON-LD `JobPosting`
+   sont gardés (un article « le métier de data analyst » ne l'est pas) ;
+4. filtres : métier, âge maximum, **en France** (les tableaux de groupes
+   internationaux mêlent Paris, Bogotá et Johannesburg : seuls les lieux
+   reconnus comme français, le télétravail ou un lieu non précisé sont
+   gardés, sauf si le profil vise l'étranger), puis zone du profil d'abord.
+   Les pages avec un identifiant d'offre sont lues avant les autres.
+
+Garde-fous : `JOBWATCH_SEARCH_MAX_PAGES` (défaut 10 : deux tiers pour les
+tableaux d'entreprises, le reste pour les pages isolées) lus par veille, via `fetch_page` (robots.txt, quota, délai, cache) ; réponses du moteur
+en cache 12 h (`JOBWATCH_SEARCH_CACHE_TTL`) pour ne pas repayer une recherche
+identique. Les liens trouvés passent ensuite par le rapprochement inter-sites
+(une offre Lever trouvée par le moteur et par la page carrières du profil n'est
+gardée qu'une fois).
 
 ### Ajouter une annonce repérée soi-même (lien collé)
 
@@ -264,6 +315,19 @@ donnée extraite de l'annonce. Un profil validé reste requis, comme pour la vei
    dépassé → `availability="expired"`. Refus anti-bot ou quota atteint →
    statut indéterminé, rien n'est contourné ni supposé.
 
+**Ancienne mais toujours en ligne** : une offre **confirmée en ligne** depuis
+moins de `JOBWATCH_LIVE_DAYS` jours (défaut 14) reste présentée quel que soit
+son âge (`freshness.basis = "en_ligne"`, carte : « il y a 195 j · toujours en
+ligne »). Confirmations (colonne `jobs.live_confirmed_at`) : offre toujours
+affichée sur la page carrières de l'entreprise (connecteur `career_pages`, et
+tableaux d'entreprises découverts par la recherche ouverte), offre « Active »
+chez La bonne alternance, ou vérification de page réussie (bouton
+« Vérifier »). Une page d'offre isolée simplement encore accessible n'est pas
+une confirmation (elle garde la règle d'âge). Une offre terminée ou dont la
+date limite est passée reste masquée. Mesuré en réel : sur 9 tableaux
+d'entreprises, 8 offres « data analyst » à Paris ouvertes depuis 77 à 393
+jours étaient masquées par la seule règle d'âge.
+
 `max_age_days` se règle dans le profil (« Âge maximum des annonces », défaut
 `JOBWATCH_MAX_AGE_DAYS` ou 45). `GET /api/jobs` masque par défaut les offres
 anciennes, terminées ou périmées, **sauf** si elles sont retenues ou ont un
@@ -272,6 +336,26 @@ dossier ; `include_old=true` les renvoie toutes avec `freshness`
 offres présentées (`jobs_count`) et expose `old_count`. Une offre revue dans
 une recherche redevient `active`. Jev n'est pas appelé pour les offres non
 présentées (économie d'appels).
+
+### Signaux d'alerte sur les cartes
+
+`app/signals.py` résume ce qui demande l'attention en trois puces au plus
+(icône + libellé court, détail au survol), exposées par `GET /api/jobs`
+(`signals`) et affichées sous le titre de chaque offre. Par ordre
+d'importance :
+
+| Signal | Couleur | Condition |
+|---|---|---|
+| Terminée / Ancienne · N j | rouge | page terminée, date limite passée, ou trop ancienne (visible avec « Anciennes · Afficher ») |
+| Contrat CDI, 5 an(s) d'exp. exigés, Hors zone, Autre métier… | rouge | filtre du scoring non respecté (contrat, expérience, localisation, intitulé, salaire, exclusions) |
+| Clôture dans N j | ambre | date limite (`validThrough`, La bonne alternance) dans 7 jours au plus |
+| Récente · N j | vert | publiée il y a 3 jours au plus |
+| Toujours en ligne · N j | neutre | ancienne mais confirmée en ligne |
+| Vue sur N sites | neutre | diffusée sur plusieurs sites |
+
+Les icônes sont des SVG intégrés à `app/static/app.js` (aucune police
+d'icônes externe). La date limite n'existe que pour les offres qui la
+publient : La bonne alternance et les pages avec données structurées.
 
 ### Contrat et expérience qualifiés
 

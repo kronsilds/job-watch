@@ -15,10 +15,19 @@ class Job(Base):
  # dernière vérification de la page (active / expired).
  published_at:Mapped[datetime|None]=mapped_column(DateTime,nullable=True); expires_at:Mapped[datetime|None]=mapped_column(DateTime,nullable=True); last_seen_at:Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
  availability:Mapped[str|None]=mapped_column(String,nullable=True,default="active"); availability_checked_at:Mapped[datetime|None]=mapped_column(DateTime,nullable=True); availability_note:Mapped[str|None]=mapped_column(String,nullable=True,default="")
+ # Dernière confirmation que l'offre est toujours en ligne : affichée sur la page
+ # carrières de l'entreprise, « Active » chez La bonne alternance, ou page vérifiée.
+ live_confirmed_at:Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
 class JobSource(Base):
  """Une diffusion d'une offre sur un site (app/dedup.py) : la même annonce
  publiée sur LinkedIn, HelloWork et WTTJ = une ligne `jobs`, trois `job_sources`."""
  __tablename__="job_sources"; id:Mapped[int]=mapped_column(primary_key=True); job_id:Mapped[int]=mapped_column(ForeignKey("jobs.id"),index=True); source:Mapped[str]=mapped_column(String,default=""); external_id:Mapped[str]=mapped_column(String,unique=True,index=True); url:Mapped[str]=mapped_column(String,default=""); published_at:Mapped[datetime|None]=mapped_column(DateTime,nullable=True); first_seen_at:Mapped[datetime]=mapped_column(DateTime,default=lambda:datetime.now(timezone.utc)); last_seen_at:Mapped[datetime]=mapped_column(DateTime,default=lambda:datetime.now(timezone.utc))
+class WebUsage(Base):
+ """Compteur quotidien des requêtes web sortantes (charte fair use).
+
+ En base plutôt que dans un fichier quand le disque n'est pas partagé entre
+ instances (Vercel : /tmp propre à chaque instance, effacé au redémarrage)."""
+ __tablename__="web_usage"; day:Mapped[str]=mapped_column(String,primary_key=True); count:Mapped[int]=mapped_column(Integer,default=0)
 class JobRating(Base):
  __tablename__="job_ratings"; id:Mapped[int]=mapped_column(primary_key=True); user_id:Mapped[int]=mapped_column(ForeignKey("users.id"),index=True); job_id:Mapped[int]=mapped_column(ForeignKey("jobs.id"),index=True); score:Mapped[float|None]=mapped_column(Float,nullable=True); confidence:Mapped[float|None]=mapped_column(Float,nullable=True); decision:Mapped[str]=mapped_column(String,default="new"); explanation:Mapped[dict]=mapped_column(JSON,default=dict); updated_at:Mapped[datetime]=mapped_column(DateTime,default=lambda:datetime.now(timezone.utc),onupdate=lambda:datetime.now(timezone.utc))
  __table_args__=(UniqueConstraint("user_id","job_id",name="uq_job_ratings_user_job"),)

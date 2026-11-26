@@ -133,6 +133,47 @@ def departements(location) -> set[str]:
     return found
 
 
+_ABROAD = re.compile(
+    r"\b(?:remote us|united states|usa|u\.s\.a?|etats unis|united kingdom|royaume uni|england|"
+    r"uk|germany|deutschland|allemagne|spain|espana|espagne|italy|italia|italie|"
+    r"netherlands|nederland|pays bas|portugal|ireland|irlande|poland|pologne|canada|"
+    r"india|inde|singapore|singapour|japan|japon|australia|australie|brazil|bresil|"
+    r"mexico|mexique|switzerland|suisse|schweiz|belgium|belgique|luxembourg|"
+    r"sweden|suede|sverige|denmark|danemark|norway|norvege|finland|austria|autriche|"
+    r"czech|romania|roumanie|greece|grece|israel|dubai|emirates|morocco|maroc|"
+    r"tunisia|tunisie|algeria|algerie|china|chine|hong kong|korea|coree|"
+    r"london|londres|berlin|munich|hamburg|madrid|barcelona|barcelone|lisbon|lisbonne|"
+    r"amsterdam|dublin|milan|rome|brussels|bruxelles|geneva|geneve|zurich|"
+    r"stockholm|copenhagen|oslo|warsaw|varsovie|prague|vienna|vienne autriche|"
+    r"new york|san francisco|boston|seattle|austin|chicago|los angeles|dallas|"
+    r"toronto|montreal|vancouver|sydney|bangalore|tokyo)\b")
+# « Dallas, TX » : code d'État américain après une virgule.
+_US_STATE = re.compile(
+    r",\s*(?:AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|"
+    r"MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY)\b")
+
+
+def is_abroad(location) -> bool:
+    """Vrai si la localisation désigne explicitement un lieu hors de France."""
+    text = str(location or "")
+    if not text.strip():
+        return False
+    return bool(_US_STATE.search(text) or _ABROAD.search(_clean(text)))
+
+
+_REMOTE = re.compile(r"\b(?:remote|teletravail|full remote|anywhere|partout)\b")
+
+
+def in_france(location) -> bool:
+    """Lieu français reconnu, télétravail sans pays étranger, ou lieu non précisé."""
+    text = str(location or "")
+    if not text.strip():
+        return True
+    if departements(text) or re.search(r"\bfrance\b", _clean(text)):
+        return True
+    return bool(_REMOTE.search(_clean(text))) and not is_abroad(text)
+
+
 def compatible(profile_locations, offer_location) -> bool | None:
     """True si un département est commun, False si aucun, None si indéterminable."""
     wanted: set[str] = set()

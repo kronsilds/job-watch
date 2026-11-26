@@ -249,6 +249,13 @@ main{max-width:1240px;margin:0 auto;padding:var(--s5) var(--gutter) var(--s7)}
 .badge.ready,.decision.retained{background:var(--acid);border-color:var(--acid-deep);color:var(--ink)}
 .decision.ignored{opacity:.5}
 .badge.stale{background:var(--danger-soft);border-color:var(--danger);color:#522017}
+/* Signaux d'alerte des cartes d'offres : icône + libellé court, 3 au plus. */
+.signals{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px}
+.sig{display:inline-flex;align-items:center;gap:5px;font:500 11px/1 'DM Mono',monospace;padding:5px 9px 5px 7px;border:1px solid var(--line-strong);border-radius:999px;color:var(--ink-soft);background:var(--field);white-space:nowrap}
+.sig svg{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.sig.bad{background:var(--danger-soft);border-color:var(--danger);color:#522017}
+.sig.warn{background:#f6e3b4;border-color:#b8862b;color:#4f3608}
+.sig.ok{background:var(--acid);border-color:var(--acid-deep);color:var(--ink)}
 .old-filter .check{display:flex;align-items:center;gap:6px;font-size:13px;text-transform:none;letter-spacing:0;color:var(--ink);min-height:36px}
 .job-meta dd a{color:inherit;text-decoration:underline;text-underline-offset:2px}
 /* Statuts Kanban */

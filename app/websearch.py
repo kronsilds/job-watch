@@ -170,9 +170,51 @@ def _cache_set(key: str, text: str, final_url: str, status: int) -> None:
         pass
 
 
+def _quota_store() -> str:
+    """``db`` ou ``file`` : où tenir le compteur quotidien.
+
+    ``JOBWATCH_WEB_QUOTA_STORE`` = ``db`` | ``file`` | ``auto`` (défaut :
+    ``db`` avec Postgres — Vercel/Neon, plusieurs instances sans disque
+    partagé —, ``file`` avec SQLite en local).
+    """
+    wanted = (_env("JOBWATCH_WEB_QUOTA_STORE", "auto") or "auto").lower()
+    if wanted in ("db", "file"):
+        return wanted
+    from .config import DATABASE_URL
+    return "file" if DATABASE_URL.startswith("sqlite") else "db"
+
+
+def _consume_budget_db(limit: int) -> bool:
+    """Compteur en base ; False si la base est indisponible (repli fichier)."""
+    try:
+        from .db import SessionLocal
+        from .models import WebUsage
+        d = SessionLocal()
+        try:
+            day = f"{date.today():%Y%m%d}"
+            row = d.get(WebUsage, day)
+            if row is None:
+                row = WebUsage(day=day, count=0)
+                d.add(row)
+            if (row.count or 0) >= limit:
+                raise BudgetExceeded()
+            row.count = (row.count or 0) + 1
+            d.commit()
+            return True
+        finally:
+            d.close()
+    except BudgetExceeded:
+        raise
+    except Exception as exc:  # table absente, réseau… : on ne bloque pas la veille
+        logger.warning("compteur de quota en base indisponible (%s) : repli fichier", exc)
+        return False
+
+
 def _consume_budget() -> None:
     """Décompte une requête sortante ; lève BudgetExceeded au-delà du quota."""
     limit = _env_int("JOBWATCH_WEB_DAILY_LIMIT", 30)
+    if _quota_store() == "db" and _consume_budget_db(limit):
+        return
     path = cache_dir() / f"usage-{date.today():%Y%m%d}.json"
     count = 0
     try:
@@ -1237,6 +1279,45 @@ def rank_by_place_and_date(items: list[dict], profile: dict) -> list[dict]:
         when = parse_date(item.get("published_at"))
         return (near, when.timestamp() if when else 0.0)
     return sorted(items, key=key, reverse=True)
+
+
+def drop_abroad(items: list[dict], profile: dict, strict: bool = False) -> list[dict]:
+    """Retire les offres situées à l'étranger, sauf si le profil vise l'étranger.
+
+    Une offre multi-sites qui cite un lieu français est gardée. ``strict``
+    (tableaux de groupes internationaux : Lever, Greenhouse, Ashby…, qui
+    mêlent Paris, Bogotá et Johannesburg) ne garde que les lieux reconnus
+    comme français, le télétravail ou un lieu non précisé.
+    """
+    from .geo_fr import departements, in_france, is_abroad
+    from .scrapers import locations_for  # import différé (cycle)
+    if any(is_abroad(loc) for loc in locations_for(profile)):
+        return items
+    keep = []
+    for item in items:
+        loc = item.get("location") or ""
+        if strict:
+            ok = in_france(loc)
+        else:
+            ok = not is_abroad(loc) or bool(departements(loc))
+        if ok:
+            keep.append(item)
+    return keep
+
+
+def drop_expired(items: list[dict]) -> list[dict]:
+    """Retire les offres dont la date limite de candidature est passée."""
+    from .freshness import parse_date, utcnow
+    now = utcnow()
+    return [i for i in items
+            if not (parse_date(i.get("expires_at")) and parse_date(i.get("expires_at")) < now)]
+
+
+def mark_live(records: list[dict]) -> list[dict]:
+    """Marque des offres normalisées comme confirmées en ligne (voir upsert_jobs)."""
+    for rec in records:
+        rec["_live"] = True
+    return records
 
 
 def drop_stale(items: list[dict], profile: dict) -> list[dict]:

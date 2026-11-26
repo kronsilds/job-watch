@@ -16,7 +16,9 @@ autre site         données ``schema.org/JobPosting`` (JSON-LD) de la page
 
 Chaque page = une requête via :func:`app.websearch.fetch_page` (charte fair
 use : robots.txt, quota quotidien, cache, délai). Les offres sont filtrées
-par métier (racines des mots) puis par fraîcheur, et classées zone d'abord.
+par métier (racines des mots) et par pays, et classées zone d'abord. Une offre
+affichée sur la page carrières est ouverte : elle est marquée « confirmée en
+ligne » et présentée quel que soit son âge (voir :func:`app.freshness.freshness`).
 """
 
 from __future__ import annotations
@@ -242,6 +244,9 @@ def search(profile: dict) -> list[dict]:
     if errors and not items:
         raise websearch.FairUseError("; ".join(errors))
     items = websearch.wttj_keyword_filter(items, metiers_for(profile))
-    items = websearch.rank_by_place_and_date(websearch.drop_stale(items, profile), profile)
+    # Une offre affichée sur la page carrières est ouverte, même publiée il y a
+    # longtemps : pas de filtre d'âge (sauf date limite dépassée).
+    items = websearch.drop_abroad(websearch.drop_expired(items), profile, strict=True)
+    items = websearch.rank_by_place_and_date(items, profile)
     cap = max(1, websearch._env_int("JOBWATCH_WEB_MAX_PER_SOURCE", 50))
-    return [normalize(i, "career_pages") for i in items[:cap]]
+    return websearch.mark_live([normalize(i, "career_pages") for i in items[:cap]])
