@@ -245,6 +245,20 @@ def test_anthropic_tasks_use_tier_models(monkeypatch):
 
 
 def test_llm_configured_recognizes_anthropic(monkeypatch):
+    # Test: Validate that `_llm_configured()` correctly recognizes Anthropic configuration
+    
+    ## Purpose
+    Verify that the `_llm_configured()` helper returns the correct boolean based on the `LLM_PROVIDER` environment variable and the presence of the `ANTHROPIC_API_KEY`.
+    
+    ## Test Scenarios
+    Execute the following assertions in order, using `monkeypatch` to manipulate environment variables:
+    
+    1. **Explicit provider selection**: When `LLM_PROVIDER` is set to `"anthropic"`, `_llm_configured()` must return `True` (the provider is explicitly chosen).
+    2. **Auto-detection with valid key**: When `LLM_PROVIDER` is `"auto"` and `ANTHROPIC_API_KEY` is set to a valid test key, `_llm_configured()` must return `True` (Anthropic is auto-detected via its API key).
+    3. **Auto-detection without key**: After deleting `ANTHROPIC_API_KEY` (while `LLM_PROVIDER` remains `"auto"`), `_llm_configured()` must return `False` (no provider can be auto-detected).
+    
+    ## Implementation
+    ```python
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     assert _llm_configured() is True
     monkeypatch.setenv("LLM_PROVIDER", "auto")
@@ -252,6 +266,7 @@ def test_llm_configured_recognizes_anthropic(monkeypatch):
     assert _llm_configured() is True
     monkeypatch.delenv("ANTHROPIC_API_KEY")
     assert _llm_configured() is False
+    ```
 
 
 def test_effective_provider_detects_bearer_and_oauth_tokens(monkeypatch):
