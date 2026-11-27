@@ -72,11 +72,33 @@ def test_get_provider_anthropic_accepts_llm_api_key(monkeypatch):
 
 
 def test_get_provider_openai_compatible_unchanged(monkeypatch):
+    # Provider Compatibility Test
+    
+    You are an expert Python test engineer. Your task is to verify that the provider factory (`get_provider`) selects the correct provider implementation based on environment variables, ensuring the OpenAI-compatible provider behavior remains unchanged.
+    
+    ## Test Steps
+    
+    1. **Set up the API key**: Configure the environment variable `LLM_API_KEY` to a test value (`sk-x`) using `monkeypatch`.
+    2. **Verify the default provider**: Call `get_provider()` and assert that its `primary` attribute is an instance of `OpenAICompatibleProvider` (confirming the OpenAI-compatible provider is unchanged).
+    3. **Override the provider type**: Set the environment variable `LLM_PROVIDER` to `local` using `monkeypatch`.
+    4. **Verify the overridden provider**: Call `get_provider()` again and assert that it returns an instance of `DeterministicProvider`.
+    
+    ## Reference Implementation
+    
+    ```python
     monkeypatch.setenv("LLM_API_KEY", "sk-x")
     p = get_provider()
     assert isinstance(p.primary, OpenAICompatibleProvider)
     monkeypatch.setenv("LLM_PROVIDER", "local")
     assert isinstance(get_provider(), DeterministicProvider)
+    ```
+    
+    ## Constraints
+    
+    - Use `monkeypatch.setenv` for all environment variable changes to ensure proper test isolation and cleanup.
+    - Do not modify global state outside the test scope.
+    - Each assertion must validate the exact expected provider type.
+    - Ensure the OpenAI-compatible provider assertion passes before overriding `LLM_PROVIDER`.
 
 
 # --- modèles par défaut -------------------------------------------------------
