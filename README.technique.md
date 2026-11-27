@@ -169,7 +169,7 @@ Le connecteur (`app/scrapers.py` + `app/websearch.py`) est **générique et conf
   requêtes) : une URL en échec ne bloque jamais les autres.
 
 - **Fair use** (usage personnel, quelques requêtes/jour) : User-Agent honnête,
-  délai aléatoire 2–5 s entre requêtes, quota quotidien (`JOBWATCH_WEB_DAILY_LIMIT`,
+  délai aléatoire 2–5 s entre requêtes, quota quotidien par compte (`JOBWATCH_WEB_DAILY_LIMIT`, 150 par défaut,
   compteur en base avec Postgres — partagé entre les instances Vercel, table
   `web_usage` — et en fichier avec SQLite ; `JOBWATCH_WEB_QUOTA_STORE`),
   cache disque 6 h, et **aucun contournement** des protections *techniques*

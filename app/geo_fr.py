@@ -56,6 +56,15 @@ REGIONS = {
     "Provence-Alpes-Côte d'Azur": "04 05 06 13 83 84",
 }
 
+# Codes INSEE des régions métropolitaines (code France Travail « 11R »…).
+REGION_INSEE = {
+    "Auvergne-Rhône-Alpes": "84", "Bourgogne-Franche-Comté": "27", "Bretagne": "53",
+    "Centre-Val de Loire": "24", "Corse": "94", "Grand Est": "44",
+    "Hauts-de-France": "32", "Île-de-France": "11", "Normandie": "28",
+    "Nouvelle-Aquitaine": "75", "Occitanie": "76", "Pays de la Loire": "52",
+    "Provence-Alpes-Côte d'Azur": "93",
+}
+
 # Grandes villes et pôles d'emploi fréquents dans les annonces.
 CITIES = {
     "lyon": "69", "villeurbanne": "69", "marseille": "13", "aix en provence": "13",

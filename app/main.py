@@ -246,6 +246,9 @@ def _load_profile_data(d, uid=None):
  if uid is not None:q=q.filter_by(user_id=uid)
  p=q.first(); return p.data if p else None
 
+from .websearch import quota_scoped as _quota_scoped
+_MATRIX_FAILURES={'blocked':'refusé par le site','rate_limited':'quota quotidien atteint','network_error':'erreur réseau','empty_response':'page vide','parse_error':'page illisible'}
+
 def _fetch_with_progress(profile_data,source,wanted,with_enrich):
  names=sources_for(profile_data) if wanted is None else [source]
  yield P.progress('start',f'Interrogation de {len(names)} connecteur(s) : {", ".join(names)}…',source=source,sources=names)
@@ -275,7 +278,7 @@ def _fetch_with_progress(profile_data,source,wanted,with_enrich):
     if not got and slot.get('requests'):
      bad={k:slot.get(k,0) for k in ('blocked','rate_limited','network_error','empty_response','parse_error')}
      if any(bad.values()):
-      per_source[name]['error']='; '.join(f'{k}: {v}' for k,v in bad.items() if v)
+      per_source[name]['error']='; '.join(f'{_MATRIX_FAILURES[k]} ({v} recherche{"s" if v>1 else ""})' for k,v in bad.items() if v)
       yield P.progress('source_error',f'{name} : échec — {per_source[name]["error"]}',source=name,error=per_source[name]['error']);continue
     yield P.progress('source_done',f'{name} : {len(got)} offre(s) récupérée(s).',source=name,count=len(got))
    if summary.get('warnings'):
@@ -354,6 +357,7 @@ def _prescore_report(profile_data,records):
   per_source={s:{'fetched':len(v),'selected':sum(1 for r in v if id(r) in sel_ids),'top_prescore':round(max((r.get('_prescore') or 0) for r in v),1) if v else 0.0} for s,v in by_src.items()}
   return {'top_n_per_source':top_n,'per_source':per_source,'selected':len(selected),'prescored':len(prescored)}
  except Exception: return None
+@_quota_scoped
 def _search_now_steps(source:str,enrich_skills:bool, uid=None):
  d=db();profile_data=_load_profile_data(d,uid);report=None
  if source in ('web','auto') or source in sources_for(profile_data or {}):
@@ -390,6 +394,7 @@ def search_now_stream(request:Request,source:str='demo',enrich_skills:bool=True)
  uid=_uid(current_user(request,db()))
  def gen():yield from _search_now_steps(source,enrich_skills,uid)
  return _stream(_safe(gen()))
+@_quota_scoped
 def _campaign_steps(source:str,enrich_skills:bool,analyze_market:bool, uid=None):
  d=db();profile_data=_load_profile_data(d,uid);report=None
  if not profile_data:
@@ -434,6 +439,7 @@ def run_campaign_stream(request:Request,source:str='demo',enrich_skills:bool=Tru
 @app.post('/api/import')
 def import_manual(request:Request,file:UploadFile=File(...)):
  path=upload_path(file.filename,file.file.read());d=db();u=current_user(request,d);uid=_uid(u);prof=_profile_query(d,uid).filter_by(status='validated').first();n=upsert_jobs(d,read_records(path),profile_data=prof.data if prof else None);d.add(Event(user_id=uid,kind='import',message=f'{n} offre(s) importée(s)'));d.commit();return {'imported':n}
+@_quota_scoped
 def _import_url_steps(payload:OfferUrlImport, uid=None):
  """Ajout d'une annonce repérée par l'utilisateur, à partir de son lien.
 

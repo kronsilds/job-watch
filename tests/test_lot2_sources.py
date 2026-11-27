@@ -164,9 +164,9 @@ def test_lba_unescapes_and_dedupes_partner_copies():
 
 
 def test_lba_region_zone_expands_to_departements(monkeypatch):
-    monkeypatch.setattr(websearch, "_fetch_geo_json",
-                        lambda url, ttl=86400: [{"code": "75"}, {"code": "92"}])
-    assert lba._departement_of("11R") == ["75", "92"]
+    # Référentiel statique : aucune requête réseau (donc aucun quota consommé).
+    monkeypatch.setattr(websearch, "fetch_page", lambda *a, **k: pytest.fail("réseau"))
+    assert lba._departement_of("11R") == ["75", "77", "78", "91", "92", "93", "94", "95"]
     assert lba._departement_of("97411") == ["974"]
 
 

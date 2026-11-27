@@ -492,3 +492,34 @@ def test_enrich_raw_offer_contrat_remote_salaire():
     assert (raw["salary_min"], raw["salary_max"]) == (45000, 45000)
 
 
+
+
+def test_resolve_zones_sans_reseau_quota_epuise(tmp_path, monkeypatch):
+    """Départements et régions se résolvent même quand le quota est épuisé."""
+    def _no_budget(*a, **k):
+        raise websearch.BudgetExceeded()
+    monkeypatch.setattr(websearch, "fetch_page", _no_budget)
+    zones, warnings = websearch.resolve_zones({"localisation": "Ile-de-France, Paris"})
+    assert [z["ft"] for z in zones] == ["11R", "75D"]
+    assert warnings == []
+    zones, warnings = websearch.resolve_zones({"localisation": "Clichy"})
+    assert zones[0]["ft"] is None and "quota" in warnings[0]
+
+
+def test_matrice_quota_epuise_resume_en_un_message(tmp_path, monkeypatch):
+    def _no_budget(*a, **k):
+        raise websearch.BudgetExceeded()
+    monkeypatch.setattr(websearch, "fetch_page", _no_budget)
+    gen = websearch.scrape_matrix_steps(
+        {"metiers_vises": ["Dev", "Data"], "localisation": "Paris"},
+        ["hellowork", "linkedin"])
+    events = []
+    try:
+        while True:
+            events.append(next(gen))
+    except StopIteration as stop:
+        _raws, detail = stop.value
+    starts = [e for e in events if e["step"] == "request_start"]
+    assert len(starts) == 1  # une seule tentative affichée, puis un résumé
+    assert any(e.get("skipped") == 3 for e in events)
+    assert detail["summary"]["sources"]["linkedin"]["rate_limited"] == 2

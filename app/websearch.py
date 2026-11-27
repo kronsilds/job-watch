@@ -29,6 +29,8 @@ remontent dans le rapport par source sans bloquer les autres connecteurs.
 
 from __future__ import annotations
 
+import contextvars
+import functools
 import gzip
 import hashlib
 import json
@@ -184,6 +186,48 @@ def _quota_store() -> str:
     return "file" if DATABASE_URL.startswith("sqlite") else "db"
 
 
+# Compte qui lance la veille : le quota quotidien est tenu PAR COMPTE (une
+# veille complète d'un utilisateur n'est jamais bloquée par celles des autres).
+QUOTA_OWNER: contextvars.ContextVar = contextvars.ContextVar(
+    "jobwatch_quota_owner", default=None)
+
+
+def quota_scope(owner, events):
+    """Itère ``events`` en imputant ses requêtes web au compte ``owner``.
+
+    Le ContextVar est posé autour de CHAQUE ``next()`` : les réponses streamées
+    itèrent le générateur dans un pool de threads (contexte recopié à chaque
+    pas), un ``set`` unique au début serait perdu dès le deuxième événement.
+    """
+    while True:
+        token = QUOTA_OWNER.set(owner)
+        try:
+            event = next(events)
+        except StopIteration as stop:
+            return stop.value
+        finally:
+            QUOTA_OWNER.reset(token)
+        yield event
+
+
+def quota_scoped(fn):
+    """Décorateur : générateur d'étapes dont le paramètre ``uid`` paie le quota."""
+    import inspect
+    sig = inspect.signature(fn)
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        uid = sig.bind(*args, **kwargs).arguments.get("uid")
+        return (yield from quota_scope(uid, fn(*args, **kwargs)))
+    return wrapper
+
+
+def _quota_key() -> str:
+    owner = QUOTA_OWNER.get()
+    day = f"{date.today():%Y%m%d}"
+    return day if owner is None else f"{day}-u{owner}"
+
+
 def _consume_budget_db(limit: int) -> bool:
     """Compteur en base ; False si la base est indisponible (repli fichier)."""
     try:
@@ -191,7 +235,7 @@ def _consume_budget_db(limit: int) -> bool:
         from .models import WebUsage
         d = SessionLocal()
         try:
-            day = f"{date.today():%Y%m%d}"
+            day = _quota_key()
             row = d.get(WebUsage, day)
             if row is None:
                 row = WebUsage(day=day, count=0)
@@ -211,11 +255,14 @@ def _consume_budget_db(limit: int) -> bool:
 
 
 def _consume_budget() -> None:
-    """Décompte une requête sortante ; lève BudgetExceeded au-delà du quota."""
-    limit = _env_int("JOBWATCH_WEB_DAILY_LIMIT", 30)
+    """Décompte une requête sortante du compte courant ; BudgetExceeded au-delà."""
+    # Par compte et par jour. 150 couvre une veille complète (matrice
+    # métier × zone × 4 sites ≈ 32 requêtes, WTTJ, recherche web, géo,
+    # vérifications) relancée deux ou trois fois dans la journée.
+    limit = _env_int("JOBWATCH_WEB_DAILY_LIMIT", 150)
     if _quota_store() == "db" and _consume_budget_db(limit):
         return
-    path = cache_dir() / f"usage-{date.today():%Y%m%d}.json"
+    path = cache_dir() / f"usage-{_quota_key()}.json"
     count = 0
     try:
         count = int(json.loads(path.read_text(encoding="utf-8")).get("count", 0))
@@ -405,15 +452,20 @@ def _split_profile_list(value) -> list[str]:
     return out
 
 
-def _fetch_geo_json(url: str, ttl: int = 86400) -> list:
+def _fetch_geo_json(url: str, ttl: int = 86400, *, raise_budget: bool = False) -> list:
     """Référentiel geo.api.gouv.fr (cache long + quota partagé).
 
     Indisponible → [] (dégradation en recherche France + avertissement,
-    comme n8n) au lieu de lever.
+    comme n8n) au lieu de lever. ``raise_budget`` laisse passer
+    :class:`BudgetExceeded` pour que l'appelant explique la vraie cause.
     """
     try:
         text = fetch_page(url, ttl=ttl)
-    except (FairUseError, Exception):
+    except BudgetExceeded:
+        if raise_budget:
+            raise
+        return []
+    except Exception:
         return []
     try:
         body = json.loads(text)
@@ -433,9 +485,14 @@ def resolve_zones(profile: dict) -> tuple[list[dict], list[str]]:
     locations = _split_profile_list(
         profile.get("localisation") or profile.get("locations")
         or locations_for(profile))
-    departments = _fetch_geo_json(
-        f"{GEO_API_BASE}/departements?fields=nom,code")
-    regions = _fetch_geo_json(f"{GEO_API_BASE}/regions?fields=nom,code")
+    # Départements et régions : référentiel statique (aucune requête, donc
+    # aucun quota consommé — « Paris » ou « Île-de-France » se résolvent même
+    # quota épuisé). Seules les communes interrogent geo.api.gouv.fr.
+    from . import geo_fr
+    departments = [{"nom": nom, "code": code}
+                   for code, nom in geo_fr.DEPARTEMENTS.items()]
+    regions = [{"nom": nom, "code": code}
+               for nom, code in geo_fr.REGION_INSEE.items()]
     warnings: list[str] = []
     zones: list[dict] = []
     for location in locations:
@@ -464,9 +521,15 @@ def resolve_zones(profile: dict) -> tuple[list[dict], list[str]]:
                           "ft": f"{reg.get('code')}R", "remote": False})
             continue
         param = "codePostal" if re.fullmatch(r"\d{5}", name) else "nom"
-        communes = _fetch_geo_json(
-            f"{GEO_API_BASE}/communes?{param}={quote_plus(name)}"
-            "&fields=nom,code,codeDepartement,codesPostaux&limit=20")
+        commune_url = (f"{GEO_API_BASE}/communes?{param}={quote_plus(name)}"
+                       "&fields=nom,code,codeDepartement,codesPostaux&limit=20")
+        try:
+            communes = _fetch_geo_json(commune_url, raise_budget=True)
+        except BudgetExceeded:
+            zones.append({"label": name, "ft": None, "remote": False})
+            warnings.append("France Travail : quota quotidien atteint, impossible "
+                            f"de localiser « {location} » — recherche ignorée.")
+            continue
         matches = [c for c in communes
                    if _norm_key(c.get("nom")) == _norm_key(name)
                    or name in (c.get("codesPostaux") or [])]
@@ -1418,6 +1481,11 @@ def _normalize_all(raw_items: list[dict], source: str) -> list[dict]:
     return [normalize(item, source) for item in raw_items[:cap]]
 
 
+_STATUS_FR = {"rate_limited": "quota quotidien atteint", "blocked": "refusé par le site",
+              "network_error": "erreur réseau", "http_error": "erreur HTTP",
+              "empty_response": "page vide", "parse_error": "page illisible"}
+
+
 def scrape_matrix_steps(profile: dict, sources: list[str] | None = None):
     """Matrice métier × zone × source **en flux** (cœur n8n porté en Python).
 
@@ -1450,13 +1518,22 @@ def scrape_matrix_steps(profile: dict, sources: list[str] | None = None):
     diagnostics: list[dict] = []
     seen: set[str] = set()
     total = len(requests)
+    quota_hit = False  # quota épuisé : on ne tente plus que le cache, en silence
+    skipped = 0
     for i, request in enumerate(requests, 1):
         source = request.get('source') or ''
         label = f"{source} : {request.get('query')} — {request.get('location')}"
-        yield P.progress('request_start', f'Requête {i}/{total} — {label}…',
-                         source=source, url=request.get('url'),
-                         index=i, total=total)
+        if not quota_hit:
+            yield P.progress('request_start', f'Requête {i}/{total} — {label}…',
+                             source=source, url=request.get('url'),
+                             index=i, total=total)
         kept, diag = scrape_request(request)
+        if diag.get("status") == "rate_limited":
+            if quota_hit:
+                diagnostics.append(diag)
+                skipped += 1
+                continue
+            quota_hit = True
         diagnostics.append(diag)
         for item in kept:
             key = f"{request['source']}|{item.get('title')}|{item.get('company')}".lower()
@@ -1466,7 +1543,8 @@ def scrape_matrix_steps(profile: dict, sources: list[str] | None = None):
             item["_matrix_source"] = request["source"]
             raws.append(item)
         status = diag.get("status")
-        msg = f"{label} → {status} ({diag.get('kept', 0)} offre(s))"
+        msg = (f"{label} → {diag.get('kept', 0)} offre(s)" if status in ("ok", "no_results")
+               else f"{label} → échec ({_STATUS_FR.get(status, status)})")
         if status in ("ok", "no_results"):
             yield P.progress('request_done', msg, source=source, status=status,
                              url=request.get('url'), index=i, total=total,
@@ -1475,6 +1553,12 @@ def scrape_matrix_steps(profile: dict, sources: list[str] | None = None):
             yield P.progress('request_error', msg, source=source, status=status,
                              error=diag.get('message'), url=request.get('url'),
                              index=i, total=total)
+    if skipped:
+        yield P.progress('request_error',
+                         f'Quota quotidien atteint : {skipped} autre(s) recherche(s) '
+                         'non lancée(s) (seules les pages déjà en cache ont été lues).',
+                         status='rate_limited', skipped=skipped,
+                         error='relancez demain ou augmentez JOBWATCH_WEB_DAILY_LIMIT')
     summary: dict = {"requests": len(diagnostics), "extracted_unique": len(raws),
                      "incomplete": bool(prep_warnings) or any(
                          d["status"] not in ("ok", "no_results") for d in diagnostics),

@@ -192,6 +192,30 @@ def test_daily_quota_can_live_in_database(tmp_path, monkeypatch):
     assert not list((tmp_path / "cache").glob("usage-*.json"))  # rien en fichier
 
 
+def test_daily_quota_is_per_account(tmp_path, monkeypatch):
+    """Chaque compte a son propre quota : l'un épuisé, l'autre lance sa veille."""
+    import app.db as dbmod
+    engine = create_engine("sqlite:///" + str(tmp_path / "quota.db"))
+    Base.metadata.create_all(engine)
+    monkeypatch.setattr(dbmod, "SessionLocal", sessionmaker(bind=engine, expire_on_commit=False))
+    monkeypatch.setenv("JOBWATCH_WEB_QUOTA_STORE", "db")
+    monkeypatch.setenv("JOBWATCH_WEB_DAILY_LIMIT", "1")
+
+    @websearch.quota_scoped
+    def steps(n, uid=None):
+        for _ in range(n):
+            websearch._consume_budget()
+            yield "ok"
+
+    assert list(steps(1, uid=1)) == ["ok"]
+    with pytest.raises(websearch.BudgetExceeded):
+        list(steps(1, uid=1))
+    assert list(steps(1, 2)) == ["ok"]  # uid positionnel : autre compte, autre quota
+    assert websearch.QUOTA_OWNER.get() is None  # contexte restauré
+    s = sessionmaker(bind=engine)()
+    assert sorted(r.count for r in s.query(WebUsage).all()) == [1, 1]
+
+
 def test_quota_store_defaults(monkeypatch):
     monkeypatch.setenv("JOBWATCH_WEB_QUOTA_STORE", "auto")
     import app.config as cfg

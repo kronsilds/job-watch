@@ -52,10 +52,9 @@ def _departement_of(ft_code: str) -> list[str]:
     if code.endswith("D"):
         return [code[:-1]]
     if code.endswith("R"):
-        from . import websearch
-        rows = websearch._fetch_geo_json(
-            f"{websearch.GEO_API_BASE}/regions/{code[:-1]}/departements?fields=code")
-        return [str(r.get("code")) for r in rows if r.get("code")]
+        from . import geo_fr  # référentiel statique : aucun quota consommé
+        name = next((n for n, c in geo_fr.REGION_INSEE.items() if c == code[:-1]), "")
+        return geo_fr.REGIONS.get(name, "").split()
     if re.fullmatch(r"[0-9AB]{5}", code):  # commune INSEE
         return [code[:3]] if code.startswith("97") else [code[:2]]
     return []
