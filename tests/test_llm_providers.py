@@ -92,6 +92,20 @@ def test_model_defaults_follow_provider(monkeypatch):
 
 
 def test_model_defaults_for_openai_compatible(monkeypatch):
+    # Test: Verify Default Model Selection for OpenAI-Compatible Provider
+    #
+    # Goal: Confirm that the internal `_model` helper returns the correct default
+    # model identifiers when the OpenAI-compatible API key is configured.
+    #
+    # Steps:
+    # 1. Set the required environment variable so the provider is treated as configured.
+    # 2. Assert that the "high-capability" branch (True) resolves to the full GPT-4o model.
+    # 3. Assert that the "lightweight" branch (False) resolves to the GPT-4o-mini model.
+    #
+    # Constraints:
+    # - Use monkeypatch to isolate environment changes to this test only.
+    # - Expected identifiers must be exact, including the "openai/" prefix.
+    
     monkeypatch.setenv("LLM_API_KEY", "sk-x")
     assert _model(True) == "openai/gpt-4o"
     assert _model(False) == "openai/gpt-4o-mini"
