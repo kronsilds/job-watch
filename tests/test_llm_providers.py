@@ -65,10 +65,27 @@ def test_get_provider_anthropic_uses_fallback_chain(monkeypatch):
 
 
 def test_get_provider_anthropic_accepts_llm_api_key(monkeypatch):
+    # Test: Anthropic Provider Accepts LLM API Key
+    
+    ## Objective
+    Verify that when the LLM provider is configured as 'anthropic' and a valid LLM API key is supplied via environment variables, the provider factory correctly instantiates an AnthropicProvider as the primary provider.
+    
+    ## Test Steps
+    1. Set the environment variable `LLM_PROVIDER` to `"anthropic"` using monkeypatch.
+    2. Set the environment variable `LLM_API_KEY` to a valid test key (e.g., `"sk-ant-via-llm"`) using monkeypatch.
+    3. Call `get_provider()` to obtain the configured provider instance.
+    4. Assert that the returned provider's `primary` attribute is an instance of `AnthropicProvider`.
+    
+    ## Test Implementation
+    ```python
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("LLM_API_KEY", "sk-ant-via-llm")
     p = get_provider()
     assert isinstance(p.primary, AnthropicProvider)
+    ```
+    
+    ## Expected Result
+    The assertion passes, confirming the Anthropic provider correctly accepts the LLM API key from the environment and is set as the primary provider.
 
 
 def test_get_provider_openai_compatible_unchanged(monkeypatch):
