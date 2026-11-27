@@ -25,7 +25,23 @@ _ENV_VARS = ("LLM_PROVIDER", "LLM_API_KEY", "ANTHROPIC_API_KEY",
 
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch, tmp_path):
-    """Isole chaque test de la configuration réelle (.env chargé au import)."""
+    """Tu es un expert en tests Python (pytest) et en gestion de configuration. Objectif : isoler complètement chaque test de la configuration réelle de l'application (par exemple un fichier .env chargé automatiquement lors de l'import d'un module).
+
+Applique les étapes suivantes :
+1. Identifie où et comment la configuration réelle est chargée (import du module, lecture du .env, variables d'environnement globales, singletons de config).
+2. Empêche tout accès à la configuration réelle pendant les tests : utilise des fixtures, le monkeypatching des variables d'environnement, l'injection de dépendances ou le mocking du chargeur de configuration.
+3. Fournis une configuration de test déterministe et contrôlée (valeurs factices explicites) indépendante de l'environnement de la machine.
+4. Garantis qu'aucun test ne dépende de l'ordre d'exécution ni d'un état partagé : réinitialise/restaure la configuration après chaque test (teardown).
+
+Contraintes :
+- N'introduis jamais de dépendance au vrai fichier .env ou aux variables d'environnement du système.
+- Évite les effets de bord persistants entre les tests.
+- Privilégie les fixtures pytest (`monkeypatch`, fixtures dédiées) et les mocks plutôt que la modification globale de l'environnement.
+
+Format de sortie attendu :
+- Un court diagnostic du problème d'isolation.
+- Le code Python/pytest proposé (fixtures, mocks, patchs) prêt à l'emploi.
+- Une brève explication de la manière dont chaque test est désormais isolé de la configuration réelle."""
     for var in _ENV_VARS:
         monkeypatch.delenv(var, raising=False)
     # Aucun compte OAuth Claude réel ne doit fuiter dans les tests.
