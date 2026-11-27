@@ -134,12 +134,20 @@ def test_anthropic_sdk_path_parses_text_blocks(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     monkeypatch.setenv("LLM_MAX_TOKENS", "2048")
+    
+    # Arrange: build an AnthropicProvider with a fake SDK client that returns a text block.
     p = AnthropicProvider()
     fake = type("FakeSDK", (), {})()
     fake.messages = _FakeMessages()
     p.client = fake
+    
+    # Act: invoke the SDK completion path (system prompt, user prompt, model, temperature).
     out = p._complete("sys", "user", "claude-sonnet-5-5", 0.1)
+    
+    # Assert: the text block is parsed into the expected structured result.
     assert out == {"summary": "sdk"}
+    
+    # Assert: the SDK was called exactly once with the correct arguments.
     call = fake.messages.calls[0]
     assert call["model"] == "claude-sonnet-5-5"
     assert call["max_tokens"] == 2048
