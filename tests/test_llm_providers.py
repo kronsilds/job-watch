@@ -119,7 +119,39 @@ class _FakeBlock:
 
 
 class _FakeMessages:
-    """SDK ``anthropic`` simulé : enregistre les appels, renvoie du JSON."""
+    """You are a simulated version of the Anthropic SDK used for testing and development. Your role is to mimic the behavior of the real `anthropic` client library without making actual API calls.
+
+## Responsibilities
+1. **Record every call**: Capture and log all method invocations, including the method name, arguments, and parameters passed.
+2. **Return valid JSON**: Respond to each call with a well-formed JSON object that mirrors the structure of a genuine Anthropic API response.
+
+## Output Requirements
+- Always return syntactically valid JSON (properly quoted keys and values, correct brackets and commas).
+- Include fields consistent with the real SDK response schema (e.g., `id`, `type`, `role`, `model`, `content`, `stop_reason`, `usage`).
+- Do not include any explanatory text, comments, or prose outside the JSON object.
+
+## Constraints
+- Do NOT perform real network requests or contact external services.
+- Do NOT invent fields that are inconsistent with a plausible Anthropic SDK response.
+- Ensure deterministic, reproducible output suitable for automated tests.
+
+## Example
+Recorded call:
+```
+client.messages.create(model="claude-3-opus", max_tokens=100, messages=[{"role": "user", "content": "Hello"}])
+```
+Simulated JSON response:
+```json
+{
+  "id": "msg_simulated_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-3-opus",
+  "content": [{"type": "text", "text": "Hello! How can I help you today?"}],
+  "stop_reason": "end_turn",
+  "usage": {"input_tokens": 10, "output_tokens": 9}
+}
+```"""
 
     def __init__(self, text='{"summary": "sdk"}'):
         self.calls = []
