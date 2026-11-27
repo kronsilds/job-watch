@@ -148,17 +148,43 @@ def test_anthropic_sdk_path_parses_text_blocks(monkeypatch):
 
 
 def test_anthropic_http_fallback_posts_messages_api(monkeypatch):
+    # Test Setup: Anthropic HTTP Fallback Message Posting
+    
+    ## Objective
+    Verify that the Anthropic HTTP fallback correctly posts messages to the API endpoint. This setup configures the test environment and provides a fake HTTP response to intercept and validate outgoing requests.
+    
+    ## Environment Configuration
+    Use monkeypatch to set the required environment variables so the client targets the Anthropic provider against a test endpoint:
+    
+    ```python
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://api.test")
+    ```
+    
+    ## Request Capture
+    Initialize a dictionary to capture the arguments (URL, headers, and JSON payload) passed to the HTTP post call so they can be asserted later:
+    
+    ```python
     captured = {}
-
+    ```
+    
+    ## Fake Response
+    Define a FakeResponse class that mimics the Anthropic API response contract. It must:
+    1. Provide a `raise_for_status()` method that is a no-op (simulating a successful 2xx response).
+    2. Provide a `json()` method returning a payload matching the Anthropic messages schema, with a `content` list containing a text block whose value is a JSON-encoded summary.
+    
+    ```python
     class FakeResponse:
         def raise_for_status(self):
             pass
-
+    
         def json(self):
             return {"content": [{"type": "text", "text": '{"summary": "ok"}'}]}
+    ```
+    
+    ## Expected Verification
+    After invoking the code under test, assert that the HTTP post was made to the expected messages endpoint, that the authentication headers include the test API key, and that the request body contains the submitted messages.
 
     class FakeClient:
         def __init__(self, timeout=None):
