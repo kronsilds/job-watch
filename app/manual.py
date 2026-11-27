@@ -50,7 +50,8 @@ TRACKING_PARAMS = {
 
 _URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 _JSONLD_RE = re.compile(
-    r"<script[^>]+type=[\"']application/ld\+json[\"'][^>]*>(.*?)</script>",
+    # « + » parfois encodé dans l'attribut (HelloWork : ``ld&#x2B;json``).
+    r"<script[^>]+type=[\"']application/ld(?:\+|&#x2[bB];|&#43;|&plus;)json[\"'][^>]*>(.*?)</script>",
     re.IGNORECASE | re.DOTALL)
 _META_TAG_RE = re.compile(r"<meta\b([^>]*)>", re.IGNORECASE)
 _ATTR_RE = re.compile(
@@ -361,7 +362,14 @@ def parse_offer_page(html: str, url: str = "") -> tuple[dict, dict]:
     site = source_label(url) if url else ""
     offer: dict = {}
     extraction: list[str] = []
-    for node in jsonld_job_postings(html):
+    if "show-more-less-html__markup" in (html or "") or "top-card-layout__title" in (html or ""):
+        # Page annonce invité LinkedIn (voir :func:`fetch_offer`).
+        found = {k: v for k, v in websearch.parse_linkedin_posting(html).items()
+                 if k in ("title", "company", "location", "description", "contract", "sectors")}
+        if found.get("title") or found.get("description"):
+            offer = found
+            extraction.append("page annonce LinkedIn")
+    for node in ([] if offer else jsonld_job_postings(html)):
         candidate = _job_posting_offer(node, url)
         if candidate.get("title") or candidate.get("description"):
             offer = candidate
@@ -439,8 +447,12 @@ def fetch_offer(url: str, overrides: dict | None = None,
     """Récupère la page du lien collé (charte fair use) et retourne l'offre extraite."""
     link = extract_url(url) or str(url or "").strip()
     _validate_url(link)
+    # LinkedIn : ``/jobs/view/…`` renvoie 404 ou un mur de connexion aux clients
+    # non connectés ; la page annonce invité donne l'intitulé et le texte complet.
+    linkedin_id = websearch.linkedin_job_id(link)
+    page = websearch.LINKEDIN_POSTING_URL.format(id=linkedin_id) if linkedin_id else link
     try:
-        html = websearch.fetch_page(link)
+        html = websearch.fetch_page(page)
     except websearch.FairUseError:
         raise
     except httpx.HTTPStatusError as exc:

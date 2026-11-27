@@ -20,7 +20,7 @@ def _records_for(d, source, file):
     return read_records(DEMO_PATH) if source=='demo' else read_records(Path(source))
 
 def main():
- a=argparse.ArgumentParser();a.add_argument('command',choices=['init','search-now','campaign-run','market-analyze','dashboard','application-generate','application-state','email-draft','application-refine','application-revise','user-create','cache-list','cache-replay','dedupe']);a.add_argument('id',type=int,nargs='?');a.add_argument('--file');a.add_argument('--state');a.add_argument('--source',default='demo');a.add_argument('--doc',default='pitch');a.add_argument('--comments',default='');a.add_argument('--user',default='');a.add_argument('--password',default='');a.add_argument('--limit',type=int,default=200);a.add_argument('--import-missing',action='store_true');x=a.parse_args();init_db();d=SessionLocal()
+ a=argparse.ArgumentParser();a.add_argument('command',choices=['init','search-now','campaign-run','market-analyze','dashboard','application-generate','application-state','email-draft','application-refine','application-revise','user-create','cache-list','cache-replay','dedupe','backfill-details','backfill-linkedin']);a.add_argument('id',type=int,nargs='?');a.add_argument('--file');a.add_argument('--state');a.add_argument('--source',default='demo');a.add_argument('--doc',default='pitch');a.add_argument('--comments',default='');a.add_argument('--user',default='');a.add_argument('--password',default='');a.add_argument('--limit',type=int,default=200);a.add_argument('--import-missing',action='store_true');x=a.parse_args();init_db();d=SessionLocal()
  if x.command=='init': print('Base initialisée.')
  elif x.command=='user-create':
   from .auth import normalize_username,hash_password
@@ -44,6 +44,14 @@ def main():
  elif x.command=='dedupe':
   from .dedup import merge_duplicates
   print(f'{merge_duplicates(d)} doublon(s) inter-sites fusionné(s).')
+ elif x.command in ('backfill-details','backfill-linkedin'):
+  from .sources import backfill_details
+  lim=x.limit if x.limit!=200 else 150
+  res=backfill_details(d,limit=lim,on_progress=lambda r:print(f"  {r['filled']} complétée(s), {r['expired']} terminée(s), {r['failed']} en échec",flush=True))
+  if res['filled'] or res['expired']:
+   for p in d.query(Profile).filter_by(status='validated').all():score_all(d,p.data,p.user_id)
+  left=res['todo']-res['filled']-res['expired']
+  print(f"{res['filled']} annonce(s) complétée(s), {res['expired']} terminée(s), {res['failed']} en échec ; il en reste {left} ({res['too_old']} ignorée(s) car de plus de {res['max_age']} jours)."+(" Quota du jour atteint : relancez demain." if res['quota'] else ''))
  elif x.command=='dashboard': print('Lancer: uvicorn app.main:app --reload')
  elif x.command=='application-generate': print({'id':generate(d,x.id).id,'state':'to_validate'})
  elif x.command=='application-state': print({'id':transition(d,x.id,x.state).id,'state':x.state})

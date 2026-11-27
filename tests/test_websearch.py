@@ -523,3 +523,174 @@ def test_matrice_quota_epuise_resume_en_un_message(tmp_path, monkeypatch):
     assert len(starts) == 1  # une seule tentative affichée, puis un résumé
     assert any(e.get("skipped") == 3 for e in events)
     assert detail["summary"]["sources"]["linkedin"]["rate_limited"] == 2
+
+
+LINKEDIN_POSTING_HTML = """
+<section class="top-card-layout"><h2 class="top-card-layout__title">Lead Dev Python (H/F)</h2>
+<a class="topcard__org-name-link" href="#">Acme</a><span class="topcard__flavor topcard__flavor--bullet">Lyon</span></section>
+<div class="description__text"><div class="show-more-less-html__markup">
+<p>Nous recrutons un <strong>lead</strong> &amp; mentor.</p><ul><li>Python</li><li>Django</li></ul></div></div>
+<ul class="description__job-criteria-list">
+<li class="description__job-criteria-item"><h3>Type d’emploi</h3><span>CDD</span></li>
+<li class="description__job-criteria-item"><h3>Secteurs</h3><span>Logiciels et Conseil</span></li></ul>
+"""
+
+
+def test_linkedin_job_id():
+    assert websearch.linkedin_job_id(
+        "https://fr.linkedin.com/jobs/view/lead-dev-at-acme-4471548673") == "4471548673"
+    assert websearch.linkedin_job_id("https://www.linkedin.com/jobs/view/4471548673/") == "4471548673"
+    assert websearch.linkedin_job_id("https://www.hellowork.com/fr-fr/emplois/1.html") == ""
+
+
+def test_parse_linkedin_posting():
+    got = websearch.parse_linkedin_posting(LINKEDIN_POSTING_HTML)
+    assert got["title"] == "Lead Dev Python (H/F)" and got["company"] == "Acme"
+    assert got["location"] == "Lyon" and got["contract"] == "CDD"
+    full_time = LINKEDIN_POSTING_HTML.replace("<span>CDD</span>", "<span>Temps plein</span>")
+    assert "contract" not in websearch.parse_linkedin_posting(full_time)
+    assert got["sectors"] == ["Logiciels", "Conseil"]
+    assert got["description"].startswith("Nous recrutons un lead & mentor.")
+    assert "• Python\n• Django" in got["description"]
+
+
+def test_fill_linkedin_details_completes_without_overwriting(monkeypatch):
+    calls = []
+    def fake(url, **k):
+        calls.append(url)
+        return LINKEDIN_POSTING_HTML
+    monkeypatch.setattr(websearch, "fetch_page", fake)
+    recs = [{"url": "https://fr.linkedin.com/jobs/view/a-at-b-111111111", "description": "",
+             "contract": "CDI"},
+            {"url": "https://fr.linkedin.com/jobs/view/c-222222222", "description": "déjà là"},
+            {"url": "https://fr.indeed.com/viewjob?jk=abc", "description": ""}]
+    assert websearch.fill_linkedin_details(recs) == 1
+    assert calls == ["https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/111111111"]
+    assert "Python" in recs[0]["description"] and recs[0]["contract"] == "CDI"
+    assert recs[1]["description"] == "déjà là" and recs[2]["description"] == ""
+
+
+def test_fill_linkedin_details_stops_at_quota(monkeypatch):
+    def no_budget(*a, **k):
+        raise websearch.BudgetExceeded()
+    monkeypatch.setattr(websearch, "fetch_page", no_budget)
+    recs = [{"url": f"https://fr.linkedin.com/jobs/view/x-{n}00000000", "description": ""}
+            for n in range(1, 4)]
+    assert websearch.fill_linkedin_details(recs) == 0
+
+
+def test_manual_linkedin_link_uses_guest_posting(monkeypatch):
+    from app import manual
+    seen = []
+    def fake(url, **k):
+        seen.append(url)
+        return LINKEDIN_POSTING_HTML
+    monkeypatch.setattr(websearch, "fetch_page", fake)
+    offer, meta = manual.fetch_offer("https://fr.linkedin.com/jobs/view/lead-at-acme-4471548673")
+    assert seen == ["https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/4471548673"]
+    assert offer["title"] == "Lead Dev Python (H/F)" and offer["company"] == "Acme"
+    assert "Django" in offer["description"]
+    assert offer["url"] == "https://fr.linkedin.com/jobs/view/lead-at-acme-4471548673"
+    assert "page annonce LinkedIn" in meta["extraction"]
+
+
+def test_liveness_linkedin_reads_guest_posting(monkeypatch):
+    from app import freshness
+    seen = []
+    def fake(url, **k):
+        seen.append(url)
+        return LINKEDIN_POSTING_HTML, url
+    monkeypatch.setattr(websearch, "fetch_page_info", fake)
+    res = freshness.check_offer("https://fr.linkedin.com/jobs/view/lead-at-acme-4471548673")
+    assert res["status"] == "active"
+    closed = LINKEDIN_POSTING_HTML.replace("</h2>", "</h2><p>N'accepte plus de candidatures</p>")
+    assert freshness.page_status(closed)[0] == "expired"
+    assert seen == ["https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/4471548673"]
+
+
+def test_backfill_linkedin(tmp_path, monkeypatch):
+    import httpx
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.db import Base
+    from app.models import Job
+    from app.sources import backfill_linkedin
+    engine = create_engine("sqlite:///" + str(tmp_path / "b.db"))
+    Base.metadata.create_all(engine)
+    d = sessionmaker(bind=engine)()
+    base = "https://fr.linkedin.com/jobs/view/"
+    d.add_all([Job(external_id="a", title="Lead Dev", company="Acme", url=base + "a-111111111", description=""),
+               Job(external_id="b", title="Dev", company="B", url=base + "b-222222222", description=""),
+               Job(external_id="c", title="Dev", company="C", url=base + "c-333333333", description="déjà"),
+               Job(external_id="d", title="Dev", company="D", url="https://www.hellowork.com/x.html", description="")])
+    d.commit()
+
+    def fake(url, **k):
+        if url.endswith("222222222"):
+            req = httpx.Request("GET", url)
+            raise httpx.HTTPStatusError("404", request=req, response=httpx.Response(404, request=req))
+        return LINKEDIN_POSTING_HTML
+    monkeypatch.setattr(websearch, "fetch_page", fake)
+    res = backfill_linkedin(d)
+    assert (res["todo"], res["filled"], res["expired"]) == (2, 1, 1)
+    a = d.query(Job).filter_by(external_id="a").one()
+    assert "Django" in a.description and "python" in a.skills and a.availability == "active"
+    assert d.query(Job).filter_by(external_id="b").one().availability == "expired"
+    assert backfill_linkedin(d)["todo"] == 0  # relançable : plus rien à faire
+
+
+HELLOWORK_OFFER_HTML = """<html><head><title>Offre Dev | HelloWork</title>
+<script type="application/ld&#x2B;json">
+{"@context":"https://schema.org","@type":"JobPosting","title":"Dev Python H/F",
+ "url":"https://www.hellowork.com/fr-fr/emplois/84440686.html",
+ "description":"<h2>Les missions</h2><p>Coder en Python &amp; Django.</p>",
+ "hiringOrganization":{"@type":"Organization","name":"Acme"},
+ "datePosted":"2026-11-14T00:05:52Z","validThrough":"2099-12-14T00:05:52Z"}
+</script></head><body></body></html>"""
+
+
+def test_jsonld_with_encoded_plus_is_read():
+    """HelloWork encode le « + » de l'attribut : ``application/ld&#x2B;json``."""
+    from app import manual
+    assert len(manual.jsonld_job_postings(HELLOWORK_OFFER_HTML)) == 1
+    assert len(websearch.parse_structured(HELLOWORK_OFFER_HTML)) == 1
+
+
+def test_fill_details_hellowork(monkeypatch):
+    calls = []
+    def fake(url, **k):
+        calls.append(url)
+        return HELLOWORK_OFFER_HTML
+    monkeypatch.setattr(websearch, "fetch_page", fake)
+    url = "https://www.hellowork.com/fr-fr/emplois/84440686.html"
+    recs = [{"url": url, "description": "", "company": "Acme"},
+            {"url": "https://www.hellowork.com/fr-fr/emploi/recherche.html?k=x", "description": ""}]
+    assert websearch.fill_details(recs) == 1
+    assert calls == [url]
+    assert "Django" in recs[0]["description"] and recs[0]["published_at"]
+    assert recs[1]["description"] == ""
+
+
+def test_backfill_skips_old_offers(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.db import Base
+    from app.models import Job
+    from app.sources import backfill_details
+    engine = create_engine("sqlite:///" + str(tmp_path / "o.db"))
+    Base.metadata.create_all(engine)
+    d = sessionmaker(bind=engine)()
+    now = datetime.now(timezone.utc)
+    base = "https://fr.linkedin.com/jobs/view/"
+    d.add_all([Job(external_id="new", title="Dev", company="A", url=base + "a-111111111",
+                   description="", published_at=now - timedelta(days=10)),
+               Job(external_id="old", title="Dev", company="B", url=base + "b-222222222",
+                   description="", published_at=now - timedelta(days=60))])
+    d.commit()
+    calls = []
+    monkeypatch.setattr(websearch, "fetch_page",
+                        lambda url, **k: calls.append(url) or LINKEDIN_POSTING_HTML)
+    res = backfill_details(d)
+    assert (res["todo"], res["too_old"], res["max_age"], res["filled"]) == (1, 1, 45, 1)
+    assert calls == ["https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/111111111"]

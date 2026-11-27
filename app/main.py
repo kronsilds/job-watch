@@ -384,7 +384,7 @@ def _search_now_steps(source:str,enrich_skills:bool, uid=None):
    report=dict(report or {});report['prescoring']=presel
    yield P.progress('prescore',f'Pré-notation : {presel["prescored"]} offre(s) notées, top-{presel["top_n_per_source"]} par site → {presel["selected"]} enrichie(s).',prescoring=presel)
   yield P.progress('enrich_llm','Complétion des champs manquants sur le top pré-noté (heuristique + LLM light si configuré)…')
-  stats={};n=upsert_jobs(d,records,profile_data=profile_data,stats=stats);p=_profile_query(d,uid).filter_by(status='validated').first()
+  stats={};n=upsert_jobs(d,records,profile_data=profile_data,stats=stats,fetch_details=True);p=_profile_query(d,uid).filter_by(status='validated').first()
   yield P.progress('imported',f'{n} nouvelle(s) offre(s) importée(s) en base.')
   yield from _dedupe_steps(d,stats)
   if p:
@@ -420,7 +420,7 @@ def _campaign_steps(source:str,enrich_skills:bool,analyze_market:bool, uid=None)
    report=dict(report or {});report['prescoring']=presel
    yield P.progress('prescore',f'Pré-notation : {presel["prescored"]} offre(s) notées, top-{presel["top_n_per_source"]} par site → {presel["selected"]} enrichie(s).',prescoring=presel)
   yield P.progress('enrich_llm','Complétion des champs manquants sur le top pré-noté (heuristique + LLM light si configuré)…')
-  stats={};n=upsert_jobs(d,records,profile_data=profile_data,stats=stats)
+  stats={};n=upsert_jobs(d,records,profile_data=profile_data,stats=stats,fetch_details=True)
   yield P.progress('imported',f'{n} nouvelle(s) offre(s) importée(s) en base.')
   yield from _dedupe_steps(d,stats)
  else:

@@ -283,6 +283,9 @@ def page_status(html: str, final_url: str = "", original_url: str = "",
             return "expired", "l'annonce redirige vers une page de recherche"
     if postings:
         return "active", "annonce en ligne (données JobPosting présentes)"
+    if "show-more-less-html__markup" in (html or ""):
+        # Page annonce invité LinkedIn : texte présent et aucune mention de clôture.
+        return "active", "annonce LinkedIn en ligne"
     return "unknown", "page lue, statut de l'annonce indéterminé"
 
 
@@ -298,6 +301,11 @@ def check_offer(url: str, now: datetime | None = None) -> dict:
     from . import websearch
     if not str(url or "").startswith("http"):
         return {"status": "unknown", "reason": "pas de lien vers l'annonce"}
+    # LinkedIn renvoie 404 sur ``/jobs/view/…`` aux clients non connectés, même
+    # pour une offre ouverte : on lit la page annonce invité à la place.
+    linkedin_id = websearch.linkedin_job_id(url)
+    if linkedin_id:
+        url = websearch.LINKEDIN_POSTING_URL.format(id=linkedin_id)
     try:
         html, final_url = websearch.fetch_page_info(url, ttl=43200)
     except httpx.HTTPStatusError as exc:

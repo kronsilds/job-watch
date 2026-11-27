@@ -774,6 +774,129 @@ def parse_linkedin(html: str, base: str = "https://www.linkedin.com") -> list[di
     return _parse_linkedin_loose(html, base)
 
 
+# ---------------------------------------------------------------------------
+# Texte complet des annonces LinkedIn
+# ---------------------------------------------------------------------------
+# La page de recherche ne donne que des cartes (titre, entreprise, lieu) : le
+# texte de l'annonce vient de la page invité ``jobs-guest/.../jobPosting/{id}``
+# (``/jobs/view/…`` renvoie 404 ou un mur de connexion aux clients non connectés).
+
+LINKEDIN_POSTING_URL = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{id}"
+_LINKEDIN_ID_RE = re.compile(r"linkedin\.com/jobs/(?:view|collections)/(?:[^/?#]*?-)?(\d{6,})")
+_LINKEDIN_CRITERIA = {
+    "type d'emploi": "contract", "employment type": "contract",
+    "secteurs": "sectors", "industries": "sectors",
+    "niveau hiérarchique": "seniority", "seniority level": "seniority",
+}
+_LINKEDIN_NOT_CONTRACT = {"temps plein", "temps partiel", "full-time", "part-time",
+                          "autre", "other"}
+
+
+def linkedin_job_id(url: str) -> str:
+    """Identifiant numérique d'une annonce LinkedIn (``''`` si ce n'en est pas une)."""
+    m = _LINKEDIN_ID_RE.search(str(url or ""))
+    return m.group(1) if m else ""
+
+
+def _html_to_paragraphs(raw: str) -> str:
+    """Comme :func:`_html_to_text`, en gardant les paragraphes et les puces."""
+    import html as _html
+    text = re.sub(r"(?i)<br\s*/?>|</(?:p|div|h\d|ul|ol)>", "\n", str(raw or ""))
+    text = re.sub(r"(?i)<li[^>]*>", "\n• ", text)
+    text = _html.unescape(re.sub(r"<[^>]+>", " ", text))
+    lines = [re.sub(r"[ \t ]+", " ", line).strip() for line in text.split("\n")]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+def parse_linkedin_posting(html: str) -> dict:
+    """Intitulé, entreprise, lieu, texte et critères d'une page annonce invité."""
+    _require_bs4()
+    soup = BeautifulSoup(html or "", "html.parser")
+    out: dict = {}
+    for field, sel in (("title", "h2.top-card-layout__title"),
+                       ("company", "a.topcard__org-name-link"),
+                       ("location", "span.topcard__flavor--bullet")):
+        value = _text(soup.select_one(sel))
+        if value:
+            out[field] = value
+    body = (soup.select_one("div.show-more-less-html__markup")
+            or soup.select_one("div.description__text"))
+    if body is not None:
+        out["description"] = _html_to_paragraphs(body.decode_contents())
+    for item in soup.select("li.description__job-criteria-item"):
+        label = _text(item.select_one("h3")).lower().replace("’", "'")
+        value = _text(item.select_one("span"))
+        field = _LINKEDIN_CRITERIA.get(label)
+        if not field or not value:
+            continue
+        if field == "contract" and value.lower() in _LINKEDIN_NOT_CONTRACT:
+            continue  # temps de travail, pas un type de contrat
+        out[field] = ([v.strip() for v in re.split(r",| et | and ", value) if v.strip()]
+                      if field == "sectors" else value)
+    return out
+
+
+_HELLOWORK_OFFER_RE = re.compile(r"hellowork\.com/[^?#]*/emplois/\d+\.html")
+
+
+def detail_page(url: str):
+    """``(page à lire, parseur)`` donnant le texte d'une annonce, ou ``None``.
+
+    LinkedIn : page annonce invité ; HelloWork : page de l'offre (JSON-LD
+    ``JobPosting``). Les autres sites fournissent déjà le texte dans la recherche.
+    """
+    job_id = linkedin_job_id(url)
+    if job_id:
+        return LINKEDIN_POSTING_URL.format(id=job_id), parse_linkedin_posting
+    if _HELLOWORK_OFFER_RE.search(str(url or "")):
+        from .manual import parse_offer_page  # import local (cycle)
+        return url, lambda html: parse_offer_page(html, url)[0]
+    return None
+
+
+_DETAIL_FIELDS = ("contract", "sectors", "published_at", "expires_at")
+
+
+def fill_details(records: list[dict], limit: int | None = None) -> int:
+    """Complète en place les annonces sans texte (LinkedIn, HelloWork).
+
+    Une requête par annonce. Ne remplace jamais une donnée déjà présente.
+    S'arrête au quota épuisé ; une page en échec n'empêche pas les autres.
+    Retourne le nombre d'annonces complétées.
+    """
+    if limit is None:
+        limit = _env_int("JOBWATCH_DETAILS_MAX",
+                         _env_int("JOBWATCH_LINKEDIN_DETAILS_MAX", 15))
+    done = 0
+    for rec in records:
+        if done >= limit:
+            break
+        if str(rec.get("description") or "").strip():
+            continue
+        page = detail_page(rec.get("url"))
+        if page is None:
+            continue
+        url, parse = page
+        try:
+            details = parse(fetch_page(url, ttl=86400))
+        except BudgetExceeded:
+            break
+        except Exception as exc:  # page retirée, anti-bot… : on passe à la suivante
+            logger.info("texte de l'annonce indisponible (%s) : %s", url, exc)
+            continue
+        if not str(details.get("description") or "").strip():
+            continue
+        rec["description"] = details["description"]
+        for key in _DETAIL_FIELDS:
+            if details.get(key) and not rec.get(key):
+                rec[key] = details[key]
+        done += 1
+    return done
+
+
+fill_linkedin_details = fill_details  # nom historique
+
+
 def _parse_linkedin_loose(html: str, base: str) -> list[dict]:
     """Repli regex n8n : split <li / base-card, motifs title/link/entreprise."""
     out = []
@@ -1067,7 +1190,7 @@ def parse_structured(html: str) -> list[dict]:
     """Repli universel n8n : blocs JSON-LD ``@type: JobPosting``."""
     out = []
     for m in re.finditer(
-            r'<script[^>]*type="application/ld\+json"[^>]*>([\s\S]*?)</script>',
+            r'<script[^>]*type="application/ld(?:\+|&#x2[bB];|&#43;|&plus;)json"[^>]*>([\s\S]*?)</script>',
             html, re.I):
         try:
             payload = json.loads(m.group(1))

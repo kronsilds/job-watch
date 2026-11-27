@@ -111,7 +111,7 @@ def _fill(j, r: dict) -> None:
   setattr(j, k, merged)
 
 
-def upsert_jobs(db,records,provider=None,profile_data=None,top_n: int | None = None, llm_budget: int | None = None, stats: dict | None = None):
+def upsert_jobs(db,records,provider=None,profile_data=None,top_n: int | None = None, llm_budget: int | None = None, stats: dict | None = None, fetch_details: bool = False):
  """Enregistre les annonces : pré-note, complétion ciblée, rapprochement inter-sites.
 
  Une annonce déjà vue sur un autre site (même entreprise, intitulé proche,
@@ -120,6 +120,8 @@ def upsert_jobs(db,records,provider=None,profile_data=None,top_n: int | None = N
  ``job_sources``. Les dates (publication, limite, dernière apparition) sont
  mises à jour à chaque passage. Retourne le nombre d'offres **nouvelles** ;
  ``stats`` (facultatif) reçoit ``{"created", "merged", "updated"}``.
+ ``fetch_details`` (veille web) récupère le texte complet des annonces
+ LinkedIn et HelloWork retenues, que la page de recherche ne fournit pas.
  """
  from .dedup import JobIndex
  from .freshness import aware, utcnow
@@ -130,6 +132,9 @@ def upsert_jobs(db,records,provider=None,profile_data=None,top_n: int | None = N
  selected_ids = {id(r) for r in selected}
  if llm_budget is None:
   llm_budget = _llm_budget_for(len(selected))
+ if fetch_details:
+  from .websearch import fill_details
+  fill_details(selected)  # avant la complétion : elle lit ce texte
  enriched = enrich_offers(list(selected), provider=provider, llm_budget=llm_budget)
  enriched_by_id = {id(r): e for r, e in zip(selected, enriched)}
  final = [(enriched_by_id.get(id(r), r) if id(r) in selected_ids else r) for r in prescored]
@@ -191,3 +196,73 @@ def upsert_jobs(db,records,provider=None,profile_data=None,top_n: int | None = N
  if stats is not None:
   stats.update(counts)
  return counts["created"]
+
+
+def backfill_details(db, limit: int = 150, on_progress=None, max_age: int | None = None) -> dict:
+ """Rattrape le texte des annonces déjà en base qui n'en ont pas (LinkedIn, HelloWork).
+
+ Une requête par annonce (quota et cache de la veille), les offres actives
+ les mieux notées d'abord. La page sert aussi de vérification : offre
+ retirée (404/410) ou close → marquée terminée. Ne remplace jamais une
+ donnée existante ; s'arrête au quota épuisé. Relançable : les annonces déjà
+ complétées sont ignorées. Les annonces trop anciennes pour être affichées
+ (plus de ``max_age`` jours, par défaut le plus grand ``max_age_days`` des
+ profils validés) ne sont pas rattrapées : inutile de dépenser le quota.
+ """
+ import httpx
+ from . import freshness, websearch
+ from .models import Job, Profile
+ from .scrapers import enrich_skills_from_text
+ if max_age is None:
+  ages = [freshness.max_age_days(p.data) for p in db.query(Profile).filter_by(status='validated').all()]
+  max_age = max(ages) if ages else freshness.max_age_days()
+ candidates = [j for j in db.query(Job).all()
+               if websearch.detail_page(j.url) and not str(j.description or "").strip()]
+ jobs = [j for j in candidates if freshness.freshness(j, max_age)["fresh"]]
+ jobs.sort(key=lambda j: (-(j.score or 0), -(j.created_at.timestamp() if j.created_at else 0)))
+ res = {"todo": len(jobs), "too_old": len(candidates) - len(jobs), "max_age": max_age,
+        "filled": 0, "expired": 0, "failed": 0, "quota": False}
+ for j in jobs[:limit]:
+  url, parse = websearch.detail_page(j.url)
+  try:
+   html = websearch.fetch_page(url, ttl=86400)
+  except websearch.BudgetExceeded:
+   res["quota"] = True
+   break
+  except httpx.HTTPStatusError as exc:
+   code = exc.response.status_code if exc.response is not None else 0
+   if code in (404, 410):
+    freshness.apply_check(j, {"status": "expired", "reason": f"la page de l'annonce n'existe plus (HTTP {code})"})
+    res["expired"] += 1; db.commit()
+   else:
+    res["failed"] += 1
+   continue
+  except Exception:
+   res["failed"] += 1
+   continue
+  status, reason = freshness.page_status(html, url, url)
+  freshness.apply_check(j, {"status": status, "reason": reason})
+  if status == "expired":
+   res["expired"] += 1
+  details = parse(html)
+  if str(details.get("description") or "").strip():
+   j.description = details["description"]
+   if details.get("contract") and not j.contract:
+    j.contract = details["contract"]
+   if details.get("sectors") and not j.sectors:
+    j.sectors = details["sectors"]
+   extra = enrich_skills_from_text({"title": j.title, "description": j.description,
+                                    "skills": list(j.skills or []), "sectors": list(j.sectors or [])})
+   j.skills = extra.get("skills") or j.skills
+   j.sectors = extra.get("sectors") or j.sectors
+   if status != "expired":
+    res["filled"] += 1
+  elif status != "expired":
+   res["failed"] += 1
+  db.commit()
+  if on_progress:
+   on_progress(res)
+ return res
+
+
+backfill_linkedin = backfill_details  # nom historique
