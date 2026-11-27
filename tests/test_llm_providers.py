@@ -48,10 +48,23 @@ def test_effective_provider_auto_detection(monkeypatch):
 
 
 def test_effective_provider_explicit_values(monkeypatch):
-    for value in ("anthropic", "claude", "openrouter", "openai",
-                  "compatible", "local"):
-        monkeypatch.setenv("LLM_PROVIDER", value)
-        assert effective_provider() == value
+    You are an expert Python test engineer. Write a parametrized test that verifies the effective_provider() function correctly returns the configured LLM provider value from the environment.
+                  
+                  Requirements:
+                  1. Iterate over the following valid provider values: "anthropic", "claude", "openrouter", "openai", "compatible", and "local".
+                  2. For each value, use monkeypatch.setenv to set the environment variable "LLM_PROVIDER" to that value.
+                  3. Assert that effective_provider() returns exactly the value that was set.
+                  4. Ensure each iteration is independent so that one value does not affect the next.
+                  
+                  Example structure:
+                  
+                  for value in ("anthropic", "claude", "openrouter", "openai", "compatible", "local"):
+                      monkeypatch.setenv("LLM_PROVIDER", value)
+                      assert effective_provider() == value
+                  
+                  Constraints:
+                  - Do not modify environment variables outside the test scope.
+                  - Verify that the returned value matches the set value exactly (case-sensitive).
 
 
 def test_get_provider_anthropic_uses_fallback_chain(monkeypatch):
