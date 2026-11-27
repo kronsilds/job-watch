@@ -55,13 +55,49 @@ def test_effective_provider_explicit_values(monkeypatch):
 
 
 def test_get_provider_anthropic_uses_fallback_chain(monkeypatch):
+    # Test: Anthropic Provider Uses Fallback Chain
+    
+    ## Objective
+    Verify that when the LLM provider is configured as 'anthropic', the system correctly constructs a FallbackProvider with an AnthropicProvider as the primary and a DeterministicProvider as the fallback.
+    
+    ## Setup
+    Configure the environment to select the Anthropic provider and supply a test API key:
+    
+    ```python
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    ```
+    
+    ## Execution
+    Retrieve the provider instance:
+    
+    ```python
     p = get_provider()
-    assert isinstance(p, FallbackProvider)
-    assert isinstance(p.primary, AnthropicProvider)
-    assert isinstance(p.fallback, DeterministicProvider)
-    assert p.primary.name == "claude"
+    ```
+    
+    ## Assertions
+    Verify the following conditions, in order:
+    
+    1. The returned provider is a `FallbackProvider`:
+       ```python
+       assert isinstance(p, FallbackProvider)
+       ```
+    2. The primary provider is an `AnthropicProvider`:
+       ```python
+       assert isinstance(p.primary, AnthropicProvider)
+       ```
+    3. The fallback provider is a `DeterministicProvider`:
+       ```python
+       assert isinstance(p.fallback, DeterministicProvider)
+       ```
+    4. The primary provider's name is `"claude"`:
+       ```python
+       assert p.primary.name == "claude"
+       ```
+    
+    ## Constraints
+    - Do not make real network calls; the test API key is a placeholder only.
+    - Each assertion must pass independently for the test to succeed.
 
 
 def test_get_provider_anthropic_accepts_llm_api_key(monkeypatch):
