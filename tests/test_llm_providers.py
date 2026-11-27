@@ -189,16 +189,41 @@ def test_anthropic_http_fallback_posts_messages_api(monkeypatch):
 
 
 def test_anthropic_sdk_failure_falls_back_to_http(monkeypatch):
+    # Test: Anthropic SDK Failure Falls Back to HTTP
+    
+    ## Objective
+    Verify that when the Anthropic SDK client fails (e.g., the SDK is unavailable or raises an error), the system gracefully falls back to a direct HTTP request and correctly parses the response.
+    
+    ## Setup Steps
+    1. Configure environment variables to select the Anthropic provider:
+       - Set `LLM_PROVIDER` to `"anthropic"`.
+       - Set `ANTHROPIC_API_KEY` to a test key (`"sk-ant-test"`).
+    2. Initialize a `calls` list to record outbound requests for later assertions.
+    3. Simulate SDK failure so the code path is forced to use the HTTP fallback.
+    4. Provide a fake HTTP response object that mimics the Anthropic Messages API contract.
+    
+    ## Reference Implementation
+    ```python
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     calls = []
-
+    
     class FakeResponse:
         def raise_for_status(self):
             pass
-
+    
         def json(self):
             return {"content": [{"type": "text", "text": '{"summary": "http"}'}]}
+    ```
+    
+    ## Expected Behavior
+    - The SDK failure is detected and the HTTP fallback path is exercised.
+    - The HTTP response is parsed successfully, yielding a summary value of `"http"`.
+    - The `calls` list records exactly one HTTP request to the Anthropic endpoint.
+    
+    ## Constraints
+    - Do not make real network or SDK calls; use only the monkeypatched fakes.
+    - Ensure the fallback is triggered by the SDK failure, not by misconfiguration.
 
     class FakeClient:
         def __init__(self, timeout=None):
