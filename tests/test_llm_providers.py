@@ -43,8 +43,30 @@ def test_effective_provider_local_by_default():
 def test_effective_provider_auto_detection(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-x")
     assert effective_provider() == "anthropic"
-    monkeypatch.setenv("LLM_API_KEY", "sk-x")
-    assert effective_provider() == "compatible"  # compat : la clé LLM garde la main
+    # Test: LLM API Key Compatibility & Provider Detection
+    
+    ## Objective
+    Verify that when the `LLM_API_KEY` environment variable is set, the `effective_provider()` function correctly detects it and returns the `"compatible"` provider. This confirms that the LLM key takes precedence (retains control) in compatibility mode.
+    
+    ## Test Steps
+    1. **Arrange**: Use `monkeypatch` to set the `LLM_API_KEY` environment variable to a test value (e.g., `"sk-x"`).
+    2. **Act**: Call `effective_provider()` to resolve the active provider based on the current environment.
+    3. **Assert**: Confirm the returned value equals `"compatible"`, proving the LLM API key is correctly detected and prioritized.
+    
+    ## Test Implementation
+    ```python
+    def test_llm_api_key_takes_precedence(monkeypatch):
+        # Arrange: set the LLM API key so it should take control
+        monkeypatch.setenv("LLM_API_KEY", "sk-x")
+    
+        # Act & Assert: the effective provider must detect the LLM key
+        assert effective_provider() == "compatible"  # compat: the LLM key retains control
+    ```
+    
+    ## Constraints
+    - Do NOT hardcode real or production API keys; use a safe placeholder such as `"sk-x"`.
+    - Use `monkeypatch` for environment isolation so the change is automatically reverted after the test.
+    - The assertion must check for exact equality with the string `"compatible"`.
 
 
 def test_effective_provider_explicit_values(monkeypatch):
