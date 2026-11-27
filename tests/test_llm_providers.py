@@ -229,15 +229,39 @@ def test_anthropic_sdk_failure_falls_back_to_http(monkeypatch):
 
 
 def test_anthropic_tasks_use_tier_models(monkeypatch):
+    # Test: Anthropic Provider Uses Tier-Specific Models
+    
+    ## Objective
+    Verify that when the LLM provider is configured as Anthropic, tasks correctly select and use tier-specific models. This test confirms that:
+    1. The AnthropicProvider is properly instantiated as a RemoteProvider (shared task layer)
+    2. Task completions pass the expected tier model to the underlying completion call
+    
+    ## Setup
+    Configure the environment to use the Anthropic provider with a test API key:
+    
+    ```python
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     p = AnthropicProvider()
-    assert isinstance(p, RemoteProvider)  # couche tâches partagée
+    assert isinstance(p, RemoteProvider)  # shared task layer
+    
+    # Capture the model name passed to each completion call
     seen = []
-
+    
     def fake_complete(system, user, model, temperature):
         seen.append(model)
         return {"summary": "s"}
+    ```
+    
+    ## Verification Steps
+    1. Patch the provider's completion method with `fake_complete`.
+    2. Invoke the task(s) under test.
+    3. Assert that the model names collected in `seen` match the expected tier models.
+    4. Confirm no unexpected or default model was substituted.
+    
+    ## Constraints
+    - Do not make real network calls; use the fake completion function.
+    - Ensure the API key remains the test placeholder value.
 
     p._complete = fake_complete
     assert p.summarize_market({"jobs_count": 1}) == {"summary": "s"}
