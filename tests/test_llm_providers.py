@@ -41,6 +41,12 @@ def test_effective_provider_local_by_default():
 
 
 def test_effective_provider_auto_detection(monkeypatch):
+    # Test: Anthropic API Key Detection
+    # Purpose: Verify that effective_provider() correctly detects the Anthropic provider when the ANTHROPIC_API_KEY environment variable is set.
+    # Steps:
+    #   1. Use monkeypatch to set the ANTHROPIC_API_KEY environment variable to a valid test key.
+    #   2. Call effective_provider() and assert it returns "anthropic".
+    
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-x")
     assert effective_provider() == "anthropic"
     monkeypatch.setenv("LLM_API_KEY", "sk-x")
