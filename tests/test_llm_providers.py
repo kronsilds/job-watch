@@ -82,13 +82,40 @@ def test_get_provider_openai_compatible_unchanged(monkeypatch):
 # --- modèles par défaut -------------------------------------------------------
 
 def test_model_defaults_follow_provider(monkeypatch):
+    # Test: Model Defaults Follow the Configured Provider
+    
+    ## Objective
+    Verify that the `_model(heavy)` resolver selects the correct model name based on the active LLM provider and environment variable overrides. The resolution must respect this precedence order:
+    1. `LLM_MODEL_HEAVY` overrides the default heavy model when `_model(True)` is called.
+    2. `LLM_MODEL` overrides the default light model when `_model(False)` is called.
+    3. When no override is set, provider-specific defaults apply.
+    
+    ## Preconditions
+    - Use `monkeypatch.setenv` to set and mutate environment variables within the test.
+    - The provider under test is `anthropic`.
+    
+    ## Test Steps and Assertions
+    ```python
+    # 1. Select the anthropic provider.
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
-    assert _model(True) == "claude-sonnet-5-5"
-    assert _model(False) == "claude-haiku-5-5"
+    
+    # 2. With no model overrides, defaults follow the provider.
+    assert _model(True) == "claude-sonnet-5-5"   # heavy default
+    assert _model(False) == "claude-haiku-5-5"    # light default
+    
+    # 3. LLM_MODEL_HEAVY overrides the heavy default.
     monkeypatch.setenv("LLM_MODEL_HEAVY", "claude-opus-5-5")
     assert _model(True) == "claude-opus-5-5"
+    
+    # 4. LLM_MODEL overrides the light default (explicit override wins over provider default).
     monkeypatch.setenv("LLM_MODEL", "claude-fable-5-1")
-    assert _model(False) == "claude-fable-5-1"  # LLM_MODEL avant le défaut
+    assert _model(False) == "claude-fable-5-1"    # LLM_MODEL takes precedence over the default
+    ```
+    
+    ## Expected Outcome
+    All assertions pass, confirming that:
+    - Provider defaults are applied when no overrides exist.
+    - `LLM_MODEL_HEAVY` and `LLM_MODEL` environment variables take precedence over their respective defaults.
 
 
 def test_model_defaults_for_openai_compatible(monkeypatch):
