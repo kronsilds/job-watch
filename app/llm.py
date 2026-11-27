@@ -12,12 +12,14 @@ from __future__ import annotations
 import json
 import os
 import re
+from typing import Any, Callable
 
 from dotenv import load_dotenv
 from openai import OpenAI
 
 import httpx
 
+from . import observability as obs
 from .prompts import prompts as prompt_renderer
 
 load_dotenv()
@@ -312,6 +314,15 @@ class DeterministicProvider(LLMProvider):
         raise NotImplementedError(f"Tâche inconnue : {task}")
 
 
+_TASK_OPERATIONS = {"writer_pitch": "write-pitch", "writer_cv_ats": "write-cv-ats",
+                    "reviewer": "review-draft"}
+
+
+def _task_operation(task: str) -> str:
+    """Nom d'observation stable (verbe d'abord) pour une tâche de prompts.json."""
+    return _TASK_OPERATIONS.get(task, task.replace("_", "-"))
+
+
 class RemoteProvider(LLMProvider):
     """Couche « tâches » commune aux fournisseurs distants (sortie JSON).
 
@@ -326,6 +337,24 @@ class RemoteProvider(LLMProvider):
     def _complete(self, system: str, user: str, model: str, temperature: float) -> dict:
         raise NotImplementedError
 
+    def _generate(self, operation: str, system: str, user: str, model: str,
+                  temperature: float) -> dict:
+        """Appel modèle tracé comme ``generation`` Langfuse (no-op sinon).
+
+        Les transports y enregistrent la réponse brute du modèle (message
+        ``assistant`` + raisonnement), l'usage (tokens) et le chemin réellement
+        emprunté (SDK ou HTTP direct) via :func:`observability.record_response`.
+        Le résultat parsé est porté par l'observation parente de la tâche.
+        """
+        with obs.observe(
+            f"{operation}-llm", as_type="generation", model=model,
+            input=[{"role": "system", "content": system},
+                   {"role": "user", "content": user}],
+            model_parameters={"temperature": temperature},
+            metadata={"provider": self.provider_key},
+        ):
+            return self._complete(system, user, model, temperature)
+
     def generate(self, prompt: str, facts: dict) -> dict:
         # light tier: writing task, fast model is enough
         model = _model(heavy=False)
@@ -335,7 +364,7 @@ class RemoteProvider(LLMProvider):
             facts=json.dumps(facts, ensure_ascii=False, indent=2),
         )
         self.model_used = model
-        result = self._complete(system, user, model, temperature=0.2)
+        result = self._generate("generate-pitch", system, user, model, temperature=0.2)
         required = {"pitch", "email_subject", "email_body"}
         if not required.issubset(result):
             raise RuntimeError("Réponse LLM incomplète")
@@ -346,14 +375,14 @@ class RemoteProvider(LLMProvider):
         model = _model(heavy=True)
         system, user = prompt_renderer.render("analyze_profile", cv_text=cv_text)
         self.model_used = model
-        return self._complete(system, user, model, temperature=0.1)
+        return self._generate("analyze-profile", system, user, model, temperature=0.1)
 
     def complete_profile(self, cv_text: str) -> dict:
         # light tier: quick enrichment to complete a sparse heuristic extraction
         model = _model(heavy=False)
         system, user = prompt_renderer.render("complete_profile", cv_text=cv_text)
         self.model_used = model
-        return self._complete(system, user, model, temperature=0.1)
+        return self._generate("complete-profile", system, user, model, temperature=0.1)
 
     def refine_profile(self, instruction: str, profile: dict,
                        cv_text: str = "") -> dict:
@@ -368,7 +397,7 @@ class RemoteProvider(LLMProvider):
                 "(aucun CV importé : la fiche actuelle est la seule base factuelle)"),
         )
         self.model_used = model
-        result = self._complete(system, user, model, temperature=0.2)
+        result = self._generate("refine-profile", system, user, model, temperature=0.2)
         refined = result.get("profile")
         if not isinstance(refined, dict) or not refined:
             raise RuntimeError("Réponse LLM invalide (profil affiné manquant)")
@@ -390,7 +419,7 @@ class RemoteProvider(LLMProvider):
             known_fields=json.dumps(known, ensure_ascii=False, indent=2),
         )
         self.model_used = model
-        result = self._complete(system, user, model, temperature=0.1)
+        result = self._generate("enrich-offer", system, user, model, temperature=0.1)
         if not isinstance(result, dict):
             raise RuntimeError("Réponse LLM invalide")
         return result
@@ -403,7 +432,7 @@ class RemoteProvider(LLMProvider):
             facts=json.dumps(facts, ensure_ascii=False, indent=2),
         )
         self.model_used = model
-        result = self._complete(system, user, model, temperature=0.2)
+        result = self._generate("generate-cv", system, user, model, temperature=0.2)
         if not result.get("cv_ats"):
             raise RuntimeError("Réponse LLM incomplète (cv_ats manquant)")
         return {
@@ -419,7 +448,7 @@ class RemoteProvider(LLMProvider):
             "market_summary", market=json.dumps(market, ensure_ascii=False, indent=2)
         )
         self.model_used = model
-        return self._complete(system, user, model, temperature=0.2)
+        return self._generate("summarize-market", system, user, model, temperature=0.2)
 
     def analyze_market(self, profil: dict, market: dict) -> dict:
         model = _model(heavy=True)
@@ -429,7 +458,7 @@ class RemoteProvider(LLMProvider):
             market=json.dumps(market, ensure_ascii=False, indent=2),
         )
         self.model_used = model
-        return self._complete(system, user, model, temperature=0.2)
+        return self._generate("analyze-market", system, user, model, temperature=0.2)
 
     def complete_task(self, task: str, **kwargs) -> dict:
         """Tâche générique rendue depuis ``prompts.json`` (tier heavy/light)."""
@@ -437,7 +466,7 @@ class RemoteProvider(LLMProvider):
         model = _model(heavy=prompt_renderer.tier_for(task) == "heavy")
         system, user = prompt_renderer.render(task, **kwargs)
         self.model_used = model
-        result = self._complete(system, user, model, temperature=temperature)
+        result = self._generate(_task_operation(task), system, user, model, temperature=temperature)
         if not isinstance(result, dict):
             raise RuntimeError("Réponse LLM invalide")
         return result
@@ -476,12 +505,14 @@ class OpenAICompatibleProvider(RemoteProvider):
                 messages=messages,
                 response_format={"type": "json_object"},
             )
+            obs.record_response("openai", "sdk", response)
             content = response.choices[0].message.content
             if not content:
                 raise RuntimeError("Réponse LLM vide")
             return _parse_json(content)
         except Exception as exc:
             print(f"[LLM] SDK openai échoué, repli HTTP direct : {exc}")
+            obs.update_generation(metadata={"sdk_error": str(exc)[:500]})
 
         # 2) Repli sans dépendance : appel HTTP direct à l'endpoint compatible OpenAI.
         base = os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
@@ -499,7 +530,9 @@ class OpenAICompatibleProvider(RemoteProvider):
                     },
                 )
                 r.raise_for_status()
-                content = r.json()["choices"][0]["message"]["content"]
+                data = r.json()
+                content = data["choices"][0]["message"]["content"]
+            obs.record_response("openai", "http", data)
             return _parse_json(content)
         except Exception as exc:
             raise RuntimeError(f"Échec LLM (SDK puis HTTP) : {exc}")
@@ -602,6 +635,7 @@ class AnthropicProvider(RemoteProvider):
                     temperature=temperature,
                     messages=[{"role": "user", "content": user}],
                 )
+                obs.record_response("anthropic", "sdk", response)
                 content = "".join(
                     getattr(block, "text", "")
                     for block in response.content
@@ -612,6 +646,7 @@ class AnthropicProvider(RemoteProvider):
                 return _parse_json(content)
             except Exception as exc:
                 print(f"[LLM] SDK anthropic échoué, repli HTTP direct : {exc}")
+                obs.update_generation(metadata={"sdk_error": str(exc)[:500]})
 
         # 2) Repli sans dépendance : appel HTTP direct à la Messages API.
         try:
@@ -628,7 +663,9 @@ class AnthropicProvider(RemoteProvider):
                     },
                 )
                 r.raise_for_status()
-                blocks = r.json().get("content") or []
+                data = r.json()
+                blocks = data.get("content") or []
+            obs.record_response("anthropic", "http", data)
             content = "".join(
                 str(b.get("text", "")) for b in blocks if b.get("type") == "text")
             if not content:
@@ -649,70 +686,73 @@ class FallbackProvider(LLMProvider):
     def model_used(self) -> str:
         return getattr(self.primary, "model_used", "") or getattr(self.fallback, "model_used", "")
 
+    def _run(self, operation: str, input: Any, primary: Callable[[], dict],
+             fallback: Callable[[], dict]) -> dict:
+        """Tâche tracée : modèle distant, puis repli déterministe en cas d'échec.
+
+        L'observation Langfuse porte l'entrée utile de la tâche et son résultat ;
+        un repli est signalé en ``WARNING`` avec ``metadata.fallback``.
+        """
+        with obs.observe(operation, input=input,
+                         metadata={"provider": getattr(self.primary, "provider_key", "")}) as span:
+            try:
+                result = primary()
+            except Exception as exc:
+                print(f"[LLM] {operation} : échec du fournisseur distant, "
+                      f"repli déterministe ({exc})")
+                span.update(level="WARNING",
+                            status_message=f"Repli déterministe : {str(exc)[:300]}",
+                            metadata={"fallback": "deterministic"})
+                result = fallback()
+            span.update(output=result)
+            return result
+
     def generate(self, prompt: str, facts: dict) -> dict:
-        try:
-            return self.primary.generate(prompt, facts)
-        except Exception as exc:
-            print(f"[LLM] Échec du fournisseur distant : {exc}")
-            print("[LLM] Utilisation du mode déterministe")
-            return self.fallback.generate(prompt, facts)
+        return self._run("generate-pitch", {"instruction": prompt, "facts": facts},
+                         lambda: self.primary.generate(prompt, facts),
+                         lambda: self.fallback.generate(prompt, facts))
 
     def analyze_profile(self, cv_text: str) -> dict:
-        try:
-            return self.primary.analyze_profile(cv_text)
-        except Exception as exc:
-            print(f"[LLM] Profile analysis fallback: {exc}")
-            return self.fallback.analyze_profile(cv_text)
+        return self._run("analyze-profile", {"cv_text": cv_text},
+                         lambda: self.primary.analyze_profile(cv_text),
+                         lambda: self.fallback.analyze_profile(cv_text))
 
     def complete_profile(self, cv_text: str) -> dict:
-        try:
-            return self.primary.complete_profile(cv_text)
-        except Exception as exc:
-            print(f"[LLM] Profile completion fallback: {exc}")
-            return self.fallback.complete_profile(cv_text)
+        return self._run("complete-profile", {"cv_text": cv_text},
+                         lambda: self.primary.complete_profile(cv_text),
+                         lambda: self.fallback.complete_profile(cv_text))
 
     def refine_profile(self, instruction: str, profile: dict,
                        cv_text: str = "") -> dict:
-        try:
-            return self.primary.refine_profile(instruction, profile, cv_text)
-        except Exception as exc:
-            print(f"[LLM] Profile refinement fallback: {exc}")
-            return self.fallback.refine_profile(instruction, profile, cv_text)
+        return self._run("refine-profile", {"instruction": instruction, "profile": profile},
+                         lambda: self.primary.refine_profile(instruction, profile, cv_text),
+                         lambda: self.fallback.refine_profile(instruction, profile, cv_text))
 
     def enrich_offer(self, offer: dict) -> dict:
-        try:
-            return self.primary.enrich_offer(offer)
-        except Exception as exc:
-            print(f"[LLM] Offer enrichment fallback: {exc}")
-            return self.fallback.enrich_offer(offer)
+        summary = {k: offer.get(k) for k in ("title", "company", "url") if offer.get(k)}
+        return self._run("enrich-offer", summary,
+                         lambda: self.primary.enrich_offer(offer),
+                         lambda: self.fallback.enrich_offer(offer))
 
     def generate_cv(self, facts: dict) -> dict:
-        try:
-            return self.primary.generate_cv(facts)
-        except Exception as exc:
-            print(f"[LLM] CV generation fallback: {exc}")
-            return self.fallback.generate_cv(facts)
+        return self._run("generate-cv", facts,
+                         lambda: self.primary.generate_cv(facts),
+                         lambda: self.fallback.generate_cv(facts))
 
     def summarize_market(self, market: dict) -> dict:
-        try:
-            return self.primary.summarize_market(market)
-        except Exception as exc:
-            print(f"[LLM] Market summary fallback: {exc}")
-            return self.fallback.summarize_market(market)
+        return self._run("summarize-market", market,
+                         lambda: self.primary.summarize_market(market),
+                         lambda: self.fallback.summarize_market(market))
 
     def analyze_market(self, profil: dict, market: dict) -> dict:
-        try:
-            return self.primary.analyze_market(profil, market)
-        except Exception as exc:
-            print(f"[LLM] Market analysis fallback: {exc}")
-            return self.fallback.analyze_market(profil, market)
+        return self._run("analyze-market", {"profile": profil, "market": market},
+                         lambda: self.primary.analyze_market(profil, market),
+                         lambda: self.fallback.analyze_market(profil, market))
 
     def complete_task(self, task: str, **kwargs) -> dict:
-        try:
-            return self.primary.complete_task(task, **kwargs)
-        except Exception as exc:
-            print(f"[LLM] Task '{task}' fallback: {exc}")
-            return self.fallback.complete_task(task, **kwargs)
+        return self._run(_task_operation(task), kwargs,
+                         lambda: self.primary.complete_task(task, **dict(kwargs)),
+                         lambda: self.fallback.complete_task(task, **dict(kwargs)))
 
 
 def get_provider() -> LLMProvider:

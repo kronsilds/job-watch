@@ -22,6 +22,7 @@ from . import contracts as _contracts
 from .signals import job_signals
 from .market import analyze,summarize,analyze_market as market_analyzer
 from .config import DEMO_PATH
+from . import observability as _obs
 from fastapi.openapi.utils import get_openapi
 from fastapi.security import HTTPBearer
 app=FastAPI(title='Job Watch — veille emploi',description='Veille emploi explicable, sans scraping.\n\n## Authentification (Bearer)\n\n1. Créez un compte : `POST /api/auth/register` avec `{"username": "alice", "password": "secret123"}`.\n2. Récupérez le `token` de la réponse (ou via `POST /api/auth/login`).\n3. Cliquez sur **Authorize** (cadenas en haut à droite), collez `VOTRE_TOKEN` (sans `Bearer `, Swagger l\u2019ajoute).\n4. Toutes les routes verrouillées (🔒) envoient alors `Authorization: Bearer <token>`.',version='3')
@@ -60,9 +61,22 @@ def close_request_sessions():
  while sessions:
   try:sessions.pop().close()
   except Exception:pass
+@app.on_event('shutdown')
+def shutdown_tracing():_obs.shutdown()  # vide le tampon Langfuse avant l'arrêt
+def _trace_user_id(request:Request):
+ """Id du compte (token Bearer) pour attribuer les traces Langfuse ; None sinon."""
+ auth=request.headers.get('authorization','')
+ if not auth.lower().startswith('bearer ') or not auth_enabled():return None
+ s=SessionLocal()
+ try:
+  row=s.query(AuthToken).filter_by(token=auth[7:]).first()
+  return row.user_id if row else None
+ except Exception:return None
+ finally:s.close()
 @app.middleware('http')
 async def release_request_sessions(request:Request,call_next):
  _request_sessions.set([])
+ if _obs.enabled() and request.url.path.startswith('/api/'):_obs.set_user(_trace_user_id(request))
  response=await call_next(request)
  # Un flux SSE s'itère après ce middleware : c'est _stream qui ferme ses sessions.
  if 'text/event-stream' not in (response.headers.get('content-type') or ''):close_request_sessions()
