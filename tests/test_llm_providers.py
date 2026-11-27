@@ -37,7 +37,21 @@ def clean_env(monkeypatch, tmp_path):
 # --- sélection du fournisseur -------------------------------------------------
 
 def test_effective_provider_local_by_default():
-    assert effective_provider() == "local"
+    # Test: Verify Default Provider is Local
+
+## Objective
+Verify that the effective provider returned by `effective_provider()` is the local provider by default.
+
+## Instructions
+1. Call the `effective_provider()` function to retrieve the currently active provider.
+2. Assert that the returned value is exactly equal to the string "local".
+3. If the assertion fails, the test should raise an AssertionError indicating that the default provider is not set to "local".
+
+## Expected Result
+- The function `effective_provider()` must return the string "local".
+
+## Assertion
+assert effective_provider() == "local"
 
 
 def test_effective_provider_auto_detection(monkeypatch):
