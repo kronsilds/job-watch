@@ -22,6 +22,7 @@ from typing import Any, Callable, Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from . import observability as obs
 from .applications import audit
 from .db import SessionLocal
 from .llm import LLMProvider, get_provider
@@ -345,6 +346,38 @@ def _initial_state(app: Application, job: Job, profile: Profile,
     )
 
 
+def _invoke_traced(graph, state: RefinementState) -> RefinementState:
+    """Exécute le graphe sous une observation Langfuse ``agent`` (no-op sinon).
+
+    Une trace par boucle Rédacteur ↔ Évaluateur ; les boucles successives d'un
+    même dossier (raffinage puis révisions) partagent la session
+    ``application-<id>``. Chaque appel du Rédacteur / de l'Évaluateur y apparaît
+    comme une generation imbriquée.
+    """
+    job = state.get("job_offer") or {}
+    with obs.observe(
+        "refine-document", as_type="agent",
+        session_id=f"application-{state.get('application_id')}",
+        input={"document_type": state.get("document_type"),
+               "job": {"title": job.get("title"), "company": job.get("company")},
+               "user_comments": state.get("user_comments") or None,
+               "current_draft": state.get("current_draft") or None},
+        metadata={"application_id": state.get("application_id"),
+                  "document_type": state.get("document_type"),
+                  "score_threshold": SCORE_THRESHOLD,
+                  "max_iterations": MAX_ITERATIONS},
+    ) as agent:
+        final = graph.invoke(state)
+        agent.update(output={
+            "document": final.get("current_draft", ""),
+            "score": final.get("score", 0.0),
+            "iterations": final.get("iteration_count", 0),
+            "status": final.get("status"),
+            "warnings": final.get("warnings", []),
+        })
+        return final
+
+
 def run_refinement(db, application_id: int, document_type: DocumentType = "pitch",
                    user_comments: str = "",
                    provider: LLMProvider | None = None) -> RefinementState:
@@ -358,7 +391,7 @@ def run_refinement(db, application_id: int, document_type: DocumentType = "pitch
                            user_comments=user_comments.strip())
     graph = build_graph(provider=provider,
                         save_fn=lambda s: save_to_application(db, s))
-    return graph.invoke(state)
+    return _invoke_traced(graph, state)
 
 
 def revise_with_user_comments(db, application_id: int, comments: str,
@@ -383,7 +416,7 @@ def revise_with_user_comments(db, application_id: int, comments: str,
                            current_draft=current)
     graph = build_graph(provider=provider,
                         save_fn=lambda s: save_to_application(db, s))
-    return graph.invoke(state)
+    return _invoke_traced(graph, state)
 
 
 
