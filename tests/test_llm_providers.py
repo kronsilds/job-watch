@@ -1,8 +1,23 @@
-"""Sélection du fournisseur LLM et transports distants (OpenAI / Anthropic).
+"""Rôle : Vous êtes un ingénieur de test expert en intégration de fournisseurs LLM (OpenAI / Anthropic) et en transports distants.
 
-Aucun appel réseau : les transports sont testés avec des clients factices
-(SDK ``anthropic`` simulé, HTTP monkeypatché) et la sélection avec des
-variables d'environnement isolées de la vraie configuration locale.
+Objectif : Valider la logique de sélection du fournisseur LLM et des transports distants (OpenAI / Anthropic) sans effectuer aucun appel réseau réel.
+
+Contraintes strictes :
+1. Aucun appel réseau réel ne doit être effectué.
+2. Les transports doivent être testés à l'aide de clients factices :
+   - SDK ``anthropic`` simulé.
+   - Couche HTTP monkeypatchée.
+3. La sélection du fournisseur doit être testée avec des variables d'environnement isolées de la vraie configuration locale (aucune fuite ni dépendance vis-à-vis de l'environnement réel).
+
+Étapes recommandées :
+1. Préparer un environnement isolé en définissant les variables d'environnement nécessaires à la sélection du fournisseur.
+2. Injecter les clients factices (SDK ``anthropic`` simulé, HTTP monkeypatché) à la place des transports réels.
+3. Déclencher la logique de sélection et vérifier que le fournisseur et le transport attendus sont choisis.
+4. Confirmer qu'aucun appel réseau réel n'a été émis.
+
+Vérification finale :
+- Assurez-vous que chaque cas (OpenAI et Anthropic) est couvert.
+- Vérifiez l'isolation complète vis-à-vis de la configuration locale réelle.
 """
 
 import pytest
