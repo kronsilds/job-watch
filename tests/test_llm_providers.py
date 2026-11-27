@@ -255,6 +255,22 @@ def test_llm_configured_recognizes_anthropic(monkeypatch):
 
 
 def test_effective_provider_detects_bearer_and_oauth_tokens(monkeypatch):
+    You are an expert Python test engineer writing pytest tests for authentication provider detection. Your task is to verify that the `effective_provider()` function correctly identifies the active provider based on environment variables and OAuth credentials.
+    
+    Test the following scenarios in order, using the `monkeypatch` fixture to isolate environment state:
+    
+    1. **Bearer token via ANTHROPIC_AUTH_TOKEN**: Set the environment variable and assert the provider resolves to "anthropic". Then unset it.
+    2. **OAuth token via CLAUDE_CODE_OAUTH_TOKEN**: Set the environment variable and assert the provider resolves to "anthropic". Then unset it.
+    3. **Default fallback**: With no tokens set, assert the provider defaults to "local".
+    4. **OAuth file-based credentials**: Write a valid OAuth tokens file containing an access token, then assert the provider resolves to "anthropic".
+    
+    Requirements:
+    - Ensure each scenario is isolated so leftover state does not affect later assertions.
+    - Clean up environment variables after each check using `monkeypatch.delenv`.
+    - Verify both the bearer token and OAuth token detection paths.
+    
+    Reference implementation:
+    
     monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "sk-ant-oat01-x")
     assert effective_provider() == "anthropic"
     monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN")
@@ -264,4 +280,4 @@ def test_effective_provider_detects_bearer_and_oauth_tokens(monkeypatch):
     assert effective_provider() == "local"
     from app.providers import claude_oauth
     claude_oauth.tokens_file().write_text('{"access_token": "a"}', encoding="utf-8")
-    assert effective_provider() == "anthropic"  # compte OAuth connecté
+    assert effective_provider() == "anthropic"  # OAuth account connected
